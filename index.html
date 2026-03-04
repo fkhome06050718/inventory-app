@@ -318,6 +318,59 @@ select.form-input { cursor: pointer; }
 .fab { display: none; position: fixed; bottom: calc(var(--safe-bottom) + 72px); right: 20px; width: 56px; height: 56px; background: var(--accent); color: white; border: none; border-radius: 50%; font-size: 26px; cursor: pointer; box-shadow: 0 4px 20px rgba(196,112,74,0.4); z-index: 100; align-items: center; justify-content: center; transition: all var(--transition); }
 .fab:active { transform: scale(0.93); }
 
+/* RECEIPT MODAL */
+.receipt-modal { max-width: 560px; }
+.receipt-drop-area {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 28px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--transition);
+  background: var(--surface2);
+  position: relative;
+}
+.receipt-drop-area:hover, .receipt-drop-area.dragover { border-color: var(--accent); background: var(--accent-light); }
+.receipt-drop-area input { display: none; }
+.receipt-preview { width: 100%; max-height: 220px; object-fit: contain; border-radius: 10px; margin-top: 10px; display: none; }
+
+.receipt-item-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; max-height: 340px; overflow-y: auto; }
+.receipt-item-row {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface2); border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px;
+  transition: all var(--transition);
+}
+.receipt-item-row.selected { background: var(--accent-light); border-color: var(--accent); }
+.receipt-item-check { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.receipt-item-name { flex: 1; font-size: 13px; font-weight: 500; }
+.receipt-item-cat { font-size: 11px; color: var(--text-muted); }
+.receipt-item-qty-wrap { display: flex; align-items: center; gap: 4px; }
+.receipt-item-qty { width: 48px; padding: 4px 6px; border: 1.5px solid var(--border); border-radius: 6px; font-size: 13px; text-align: center; font-family: inherit; }
+
+.ai-thinking {
+  display: none;
+  flex-direction: column; align-items: center; gap: 12px;
+  padding: 28px 0;
+}
+.ai-thinking.show { display: flex; }
+.ai-dots { display: flex; gap: 6px; }
+.ai-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); animation: dotBounce 1.2s ease-in-out infinite; }
+.ai-dot:nth-child(2) { animation-delay: 0.2s; }
+.ai-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dotBounce { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }
+
+.api-key-notice {
+  background: var(--warning-light);
+  border: 1.5px solid var(--warning);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--warning);
+  margin-bottom: 14px;
+  line-height: 1.6;
+}
+
 .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(44,40,37,0.4); z-index: 90; }
 
 .empty-state { text-align: center; padding: 50px 20px; color: var(--text-muted); }
@@ -452,6 +505,8 @@ select.form-input { cursor: pointer; }
     </div>
     <div class="sidebar-bottom">
       <button class="nav-item" onclick="syncNow()"><span class="icon">🔄</span>今すぐ同期</button>
+      <button class="nav-item" onclick="openReceiptModal()"><span class="icon">🧾</span>レシートから登録</button>
+      <button class="nav-item" onclick="openApiKeySetting()"><span class="icon">🔑</span>APIキー設定</button>
       <button class="nav-item" onclick="openSettings()"><span class="icon">⚙️</span>設定</button>
     </div>
   </nav>
@@ -470,6 +525,7 @@ select.form-input { cursor: pointer; }
           <div class="sync-dot"></div><span id="syncText">オフライン</span>
         </div>
         <button class="btn btn-primary" onclick="openModal()">＋ 追加</button>
+        <button class="btn btn-ghost" onclick="openReceiptModal()" title="レシートから登録" style="padding:9px 12px">🧾</button>
       </div>
     </div>
 
@@ -494,7 +550,7 @@ select.form-input { cursor: pointer; }
       <div class="bottom-nav-items">
         <button class="bottom-nav-item active" id="bnAll" onclick="bnFilter('all',this)"><span class="icon">📦</span>すべて</button>
         <button class="bottom-nav-item" id="bnFridge" onclick="bnFilter('冷蔵庫',this)"><span class="icon">🧊</span>冷蔵庫</button>
-        <button class="bottom-nav-item" id="bnDaily" onclick="bnFilter('日用品',this)"><span class="icon">🧴</span>日用品</button>
+        <button class="bottom-nav-item" onclick="openReceiptModal()"><span class="icon">🧾</span>レシート</button>
         <button class="bottom-nav-item" id="bnExpiry" onclick="bnFilter('expiring',this)"><span class="icon">⚠️</span>期限</button>
         <button class="bottom-nav-item" onclick="toggleSidebar()"><span class="icon">☰</span>メニュー</button>
       </div>
@@ -577,6 +633,75 @@ select.form-input { cursor: pointer; }
         <button class="btn btn-ghost" onclick="closeModal()" style="flex:1">キャンセル</button>
         <button class="btn btn-primary" onclick="saveItem()" style="flex:2;justify-content:center">💾 保存する</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- RECEIPT MODAL -->
+<div class="modal-overlay" id="receiptModalOverlay">
+  <div class="modal receipt-modal">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">🧾 レシートから登録</div>
+      <button class="close-btn" onclick="closeReceiptModal()">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <!-- APIキー未設定の場合の案内 -->
+      <div class="api-key-notice" id="apiKeyNotice" style="display:none">
+        🔑 Anthropic APIキーが未設定です。
+        <a href="#" onclick="openApiKeySetting(); return false;" style="color:var(--warning);font-weight:600">設定する →</a>
+      </div>
+
+      <!-- STEP 1: 写真選択 -->
+      <div id="receiptStep1">
+        <div class="form-group">
+          <label class="form-label">📸 レシートの写真</label>
+          <div class="receipt-drop-area" id="receiptDropArea"
+               onclick="document.getElementById('receiptInput').click()"
+               ondragover="onReceiptDragOver(event)"
+               ondrop="onReceiptDrop(event)">
+            <div style="font-size:36px;margin-bottom:8px">🧾</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">タップして写真を選択</div>
+            <div style="font-size:11.5px;color:var(--text-muted)">レシートをカメラで撮影するか、ギャラリーから選んでください</div>
+            <input type="file" id="receiptInput" accept="image/*" capture="environment" onchange="onReceiptSelected(event)" />
+            <img id="receiptPreviewImg" class="receipt-preview" alt="レシートプレビュー" />
+          </div>
+        </div>
+        <button class="btn btn-primary" id="receiptAnalyzeBtn" onclick="analyzeReceipt()" style="width:100%;justify-content:center;display:none">
+          🤖 AIで商品を読み取る
+        </button>
+      </div>
+
+      <!-- STEP 2: AI解析中 -->
+      <div class="ai-thinking" id="receiptThinking">
+        <div class="ai-dots">
+          <div class="ai-dot"></div>
+          <div class="ai-dot"></div>
+          <div class="ai-dot"></div>
+        </div>
+        <div style="font-size:13px;color:var(--text-muted);font-weight:500">レシートを解析中...</div>
+        <div style="font-size:11.5px;color:var(--text-muted)" id="receiptThinkingDetail">商品名・カテゴリーを自動判定しています</div>
+      </div>
+
+      <!-- STEP 3: 結果一覧・選択 -->
+      <div id="receiptStep3" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:13px;font-weight:600" id="receiptResultTitle">商品を選んで登録</div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="receiptSelectAll()">全選択</button>
+            <button class="btn btn-ghost btn-sm" onclick="receiptSelectNone()">解除</button>
+          </div>
+        </div>
+        <div class="receipt-item-list" id="receiptItemList"></div>
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <button class="btn btn-ghost" onclick="receiptBack()" style="flex:1">← 撮り直す</button>
+          <button class="btn btn-primary" onclick="receiptRegisterSelected()" style="flex:2;justify-content:center" id="receiptRegisterBtn">
+            ✅ 選択した商品を登録
+          </button>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -1156,6 +1281,252 @@ function applyProductInfo(p, code) {
   const displayName = name || code;
   status.textContent = `✅ 「${displayName}」が見つかりました！`;
   showToast('✅ 商品情報を自動入力しました');
+}
+
+// ===== RECEIPT =====
+let receiptImageBase64 = null;
+let receiptParsedItems = [];
+let ANTHROPIC_KEY = localStorage.getItem('anthropic_api_key') || '';
+
+function openReceiptModal() {
+  receiptImageBase64 = null;
+  receiptParsedItems = [];
+  // UIリセット
+  document.getElementById('receiptStep1').style.display = 'block';
+  document.getElementById('receiptThinking').classList.remove('show');
+  document.getElementById('receiptStep3').style.display = 'none';
+  document.getElementById('receiptPreviewImg').style.display = 'none';
+  document.getElementById('receiptAnalyzeBtn').style.display = 'none';
+  document.getElementById('receiptInput').value = '';
+  document.getElementById('receiptDropArea').classList.remove('dragover');
+  // APIキー確認
+  document.getElementById('apiKeyNotice').style.display = ANTHROPIC_KEY ? 'none' : 'block';
+  document.getElementById('receiptModalOverlay').classList.add('open');
+}
+
+function closeReceiptModal() {
+  document.getElementById('receiptModalOverlay').classList.remove('open');
+}
+
+document.getElementById('receiptModalOverlay').addEventListener('click', e => {
+  if(e.target === e.currentTarget) closeReceiptModal();
+});
+
+function onReceiptDragOver(e) {
+  e.preventDefault();
+  document.getElementById('receiptDropArea').classList.add('dragover');
+}
+
+function onReceiptDrop(e) {
+  e.preventDefault();
+  document.getElementById('receiptDropArea').classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if(file && file.type.startsWith('image/')) loadReceiptFile(file);
+}
+
+function onReceiptSelected(e) {
+  const file = e.target.files[0];
+  if(file) loadReceiptFile(file);
+}
+
+function loadReceiptFile(file) {
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      // 長辺1200pxにリサイズ
+      const canvas = document.createElement('canvas');
+      const MAX = 1200;
+      let w = img.width, h = img.height;
+      if(w > MAX || h > MAX) {
+        if(w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      receiptImageBase64 = dataUrl.split(',')[1];
+      const prev = document.getElementById('receiptPreviewImg');
+      prev.src = dataUrl; prev.style.display = 'block';
+      document.getElementById('receiptAnalyzeBtn').style.display = 'flex';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function analyzeReceipt() {
+  if(!receiptImageBase64) { showToast('⚠️ 写真を選択してください'); return; }
+  if(!ANTHROPIC_KEY) { openApiKeySetting(); return; }
+
+  document.getElementById('receiptStep1').style.display = 'none';
+  document.getElementById('receiptThinking').classList.add('show');
+
+  const prompt = `このレシートの写真から、購入された食品・日用品などの商品一覧を抽出してください。
+
+以下のJSON形式のみで返答してください。他の文章は一切不要です：
+{
+  "items": [
+    {
+      "name": "商品名（日本語）",
+      "category": "カテゴリー（冷蔵庫・冷凍庫・パントリー・日用品・薬・サプリ・その他のどれか）",
+      "qty": 数量（数値、不明なら1）
+    }
+  ]
+}
+
+カテゴリーの判断基準：
+- 冷蔵庫：牛乳・豆腐・肉・魚・野菜・チーズ・卵など要冷蔵品
+- 冷凍庫：冷凍食品・アイスなど
+- パントリー：缶詰・調味料・お菓子・米・パスタ・飲料（常温）など
+- 日用品：洗剤・シャンプー・トイレットペーパーなど
+- 薬・サプリ：薬・サプリメントなど
+- その他：上記以外
+
+レシートに含まれる商品名は正確に読み取り、略称でなくフルネームで記載してください。`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-5',
+        max_tokens: 1024,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: receiptImageBase64 } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
+
+    if(!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || `API Error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const text = data.content[0].text.trim();
+
+    // JSON抽出
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if(!jsonMatch) throw new Error('JSONが見つかりません');
+    const parsed = JSON.parse(jsonMatch[0]);
+    receiptParsedItems = parsed.items || [];
+
+    if(receiptParsedItems.length === 0) throw new Error('商品が見つかりませんでした');
+
+    showReceiptResults();
+  } catch(e) {
+    document.getElementById('receiptThinking').classList.remove('show');
+    document.getElementById('receiptStep1').style.display = 'block';
+    if(e.message.includes('401') || e.message.includes('invalid')) {
+      showToast('🔑 APIキーが無効です。設定を確認してください');
+      openApiKeySetting();
+    } else {
+      showToast(`⚠️ 解析失敗: ${e.message}`);
+    }
+  }
+}
+
+function showReceiptResults() {
+  document.getElementById('receiptThinking').classList.remove('show');
+  document.getElementById('receiptStep3').style.display = 'block';
+  document.getElementById('receiptResultTitle').textContent = `${receiptParsedItems.length}件の商品が見つかりました`;
+
+  const ICONS = {'冷蔵庫':'🧊','冷凍庫':'❄️','パントリー':'🥫','日用品':'🧴','薬・サプリ':'💊','その他':'📂'};
+  const list = document.getElementById('receiptItemList');
+  list.innerHTML = receiptParsedItems.map((item, i) => `
+    <label class="receipt-item-row selected" id="receiptRow${i}">
+      <input type="checkbox" class="receipt-item-check" id="receiptCheck${i}" checked onchange="toggleReceiptRow(${i})">
+      <div style="flex:1;min-width:0">
+        <div class="receipt-item-name">${esc(item.name)}</div>
+        <div class="receipt-item-cat">${ICONS[item.category]||'📂'} ${esc(item.category)}</div>
+      </div>
+      <div class="receipt-item-qty-wrap">
+        <input type="number" class="receipt-item-qty" id="receiptQty${i}" value="${item.qty||1}" min="1" onclick="e=>e.stopPropagation()">
+        <span style="font-size:11px;color:var(--text-muted)">個</span>
+      </div>
+    </label>
+  `).join('');
+}
+
+function toggleReceiptRow(i) {
+  const checked = document.getElementById(`receiptCheck${i}`).checked;
+  document.getElementById(`receiptRow${i}`).classList.toggle('selected', checked);
+}
+
+function receiptSelectAll() {
+  receiptParsedItems.forEach((_, i) => {
+    document.getElementById(`receiptCheck${i}`).checked = true;
+    document.getElementById(`receiptRow${i}`).classList.add('selected');
+  });
+}
+
+function receiptSelectNone() {
+  receiptParsedItems.forEach((_, i) => {
+    document.getElementById(`receiptCheck${i}`).checked = false;
+    document.getElementById(`receiptRow${i}`).classList.remove('selected');
+  });
+}
+
+function receiptBack() {
+  document.getElementById('receiptStep3').style.display = 'none';
+  document.getElementById('receiptStep1').style.display = 'block';
+}
+
+async function receiptRegisterSelected() {
+  const today = new Date().toISOString().split('T')[0];
+  const toAdd = [];
+
+  receiptParsedItems.forEach((item, i) => {
+    if(!document.getElementById(`receiptCheck${i}`).checked) return;
+    const qty = parseInt(document.getElementById(`receiptQty${i}`).value) || 1;
+    toAdd.push({ id: (Date.now() + i).toString(), name: item.name, category: item.category, qty, expiry: '', note: '', photo: '', date: today });
+  });
+
+  if(toAdd.length === 0) { showToast('⚠️ 商品を1つ以上選択してください'); return; }
+
+  const btn = document.getElementById('receiptRegisterBtn');
+  btn.textContent = '登録中...'; btn.disabled = true;
+
+  // ローカルに追加
+  items.unshift(...toAdd);
+  localStorage.setItem('inventory_items', JSON.stringify(items));
+  render();
+
+  // スプレッドシートに同期
+  for(const item of toAdd) await pushItem(item);
+
+  btn.textContent = '✅ 選択した商品を登録';
+  btn.disabled = false;
+  showToast(`✅ ${toAdd.length}件を登録しました！`);
+  closeReceiptModal();
+}
+
+// ===== API KEY SETTING =====
+function openApiKeySetting() {
+  const key = prompt('Anthropic APIキーを入力してください：\n\nhttps://console.anthropic.com でキーを取得できます', ANTHROPIC_KEY);
+  if(key === null) return;
+  if(key.trim().startsWith('sk-ant-')) {
+    ANTHROPIC_KEY = key.trim();
+    localStorage.setItem('anthropic_api_key', ANTHROPIC_KEY);
+    document.getElementById('apiKeyNotice').style.display = 'none';
+    showToast('🔑 APIキーを保存しました');
+  } else if(key.trim() === '') {
+    ANTHROPIC_KEY = '';
+    localStorage.removeItem('anthropic_api_key');
+    showToast('🔑 APIキーを削除しました');
+  } else {
+    showToast('⚠️ 正しいAPIキーを入力してください（sk-ant- から始まるもの）');
+  }
 }
 
 // ===== SIDEBAR =====
