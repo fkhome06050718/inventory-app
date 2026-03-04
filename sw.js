@@ -1,5 +1,5 @@
 // おうち在庫管理 - Service Worker
-const CACHE_NAME = 'ouchi-inventory-v1';
+const CACHE_NAME = 'ouchi-inventory-v2';
 const ASSETS = [
   './',
   './index.html',
