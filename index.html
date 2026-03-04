@@ -16,6 +16,7 @@
 
 <title>おうち在庫管理</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.20.0/zxing.min.js"></script>
 
 <style>
 :root {
@@ -293,6 +294,11 @@ select.form-input { cursor: pointer; }
 .barcode-area { border: 2px dashed var(--border); border-radius: var(--radius); padding: 14px; text-align: center; background: var(--surface2); }
 .barcode-status { font-size: 11.5px; color: var(--text-muted); margin-top: 6px; }
 #barcodeVideo { width: 100%; max-height: 200px; border-radius: 8px; display: none; }
+@keyframes scanAnim {
+  0%   { top: 5%; opacity: 1; }
+  50%  { top: 90%; opacity: 1; }
+  100% { top: 5%; opacity: 1; }
+}
 
 /* BOTTOM NAV */
 .bottom-nav {
@@ -510,10 +516,22 @@ select.form-input { cursor: pointer; }
     <div class="modal-body">
       <div class="form-group">
         <label class="form-label">📷 バーコードスキャン（任意）</label>
-        <div class="barcode-area">
-          <video id="barcodeVideo" autoplay playsinline muted></video>
+        <div class="barcode-area" id="barcodeArea">
+          <div id="barcodeViewport" style="display:none;position:relative;border-radius:10px;overflow:hidden;background:#000;">
+            <video id="barcodeVideo" autoplay playsinline muted style="width:100%;max-height:220px;display:block;"></video>
+            <!-- スキャン枠オーバーレイ -->
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;">
+              <div style="width:70%;height:45%;border:2px solid rgba(196,112,74,0.9);border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,0.45);position:relative;">
+                <div style="position:absolute;top:-2px;left:-2px;width:20px;height:20px;border-top:3px solid #C4704A;border-left:3px solid #C4704A;border-radius:3px 0 0 0;"></div>
+                <div style="position:absolute;top:-2px;right:-2px;width:20px;height:20px;border-top:3px solid #C4704A;border-right:3px solid #C4704A;border-radius:0 3px 0 0;"></div>
+                <div style="position:absolute;bottom:-2px;left:-2px;width:20px;height:20px;border-bottom:3px solid #C4704A;border-left:3px solid #C4704A;border-radius:0 0 0 3px;"></div>
+                <div style="position:absolute;bottom:-2px;right:-2px;width:20px;height:20px;border-bottom:3px solid #C4704A;border-right:3px solid #C4704A;border-radius:0 0 3px 0;"></div>
+                <div id="scanLine" style="position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#C4704A,transparent);animation:scanAnim 1.8s ease-in-out infinite;top:0;"></div>
+              </div>
+            </div>
+          </div>
           <button class="btn btn-ghost btn-sm" id="barcodeBtn" onclick="toggleBarcode()">📷 カメラでスキャン</button>
-          <div class="barcode-status" id="barcodeStatus">バーコードをカメラに向けてください</div>
+          <div class="barcode-status" id="barcodeStatus">iPhoneでも読み取り可能です</div>
         </div>
       </div>
       <div class="form-group">
@@ -576,8 +594,7 @@ let items = JSON.parse(localStorage.getItem('inventory_items') || '[]');
 let currentFilter = 'all';
 let currentSort = 'name';
 let editingId = null;
-let barcodeStream = null;
-let barcodeScanning = false;
+let barcodeStream = null; // 互換性のため残す（未使用）
 let deferredPrompt = null;
 
 const ICONS = {'冷蔵庫':'🧊','冷凍庫':'❄️','パントリー':'🥫','日用品':'🧴','薬・サプリ':'💊','その他':'📂'};
@@ -992,50 +1009,105 @@ function previewPhoto(e) {
   reader.readAsDataURL(file);
 }
 
-// ===== BARCODE =====
-async function toggleBarcode(){ barcodeScanning?stopBarcode():startBarcode(); }
+// ===== BARCODE (ZXing-js) =====
+let zxingReader = null;
+let barcodeActive = false;
 
-async function startBarcode() {
-  const video=document.getElementById('barcodeVideo'),status=document.getElementById('barcodeStatus');
-  if(!('BarcodeDetector' in window)){status.textContent='⚠️ このブラウザはバーコードに対応していません';return;}
-  try {
-    barcodeStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
-    video.srcObject=barcodeStream;video.style.display='block';barcodeScanning=true;
-    document.getElementById('barcodeBtn').textContent='⏹️ スキャン停止';
-    status.textContent='📷 バーコードをカメラに向けてください...';
-    const det=new BarcodeDetector({formats:['ean_13','ean_8','qr_code','code_128','code_39']});
-    const scan=async()=>{
-      if(!barcodeScanning)return;
-      try{const bc=await det.detect(video);if(bc.length){stopBarcode();await lookupBarcode(bc[0].rawValue);return;}}catch(e){}
-      if(barcodeScanning)requestAnimationFrame(scan);
-    };
-    video.onloadedmetadata=()=>scan();
-  } catch(e){status.textContent='⚠️ カメラへのアクセスが拒否されました';}
+async function toggleBarcode() {
+  barcodeActive ? stopBarcode() : startBarcode();
 }
 
-async function lookupBarcode(code) {
-  const status=document.getElementById('barcodeStatus');
-  status.textContent=`🔍 検索中 (${code})...`;
+async function startBarcode() {
+  const status   = document.getElementById('barcodeStatus');
+  const btn      = document.getElementById('barcodeBtn');
+  const viewport = document.getElementById('barcodeViewport');
+
+  if(typeof ZXing === 'undefined') {
+    status.textContent = '⚠️ ライブラリ読み込み中です。少し待ってから再度タップしてください。';
+    return;
+  }
+
+  // カメラ許可チェック
   try {
-    const res=await fetch(`https://world.openfoodfacts.org/api/v0/product/${code}.json`);
-    const data=await res.json();
-    if(data.status===1){
-      const p=data.product;
-      document.getElementById('itemName').value=p.product_name_ja||p.product_name||'';
-      if(p.image_front_url){const prev=document.getElementById('photoPreview');prev.src=p.image_front_url;prev.style.display='block';}
-      status.textContent=`✅ 「${document.getElementById('itemName').value}」が見つかりました！`;
-      showToast('✅ 商品情報を取得しました');
-    } else {
-      status.textContent=`ℹ️ ${code} — 手動で入力してください`;
-    }
-  } catch(e){status.textContent='⚠️ 商品情報の取得に失敗しました';}
+    const test = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    test.getTracks().forEach(t=>t.stop());
+  } catch(e) {
+    status.textContent = '⚠️ カメラへのアクセスが拒否されました。設定からカメラを許可してください。';
+    return;
+  }
+
+  barcodeActive = true;
+  viewport.style.display = 'block';
+  btn.textContent = '⏹️ スキャン停止';
+  status.textContent = '📷 バーコードを枠内に合わせてください...';
+
+  try {
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.QR_CODE,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.UPC_A,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+
+    zxingReader = new ZXing.BrowserMultiFormatReader(hints);
+    await zxingReader.decodeFromConstraints(
+      { video: { facingMode: 'environment', width:{ideal:1280}, height:{ideal:720} } },
+      'barcodeVideo',
+      (result, err) => {
+        if(result) {
+          const code = result.getText();
+          stopBarcode();
+          lookupBarcode(code);
+        }
+      }
+    );
+  } catch(e) {
+    status.textContent = '⚠️ カメラの起動に失敗しました。';
+    stopBarcode();
+  }
 }
 
 function stopBarcode() {
-  if(barcodeStream){barcodeStream.getTracks().forEach(t=>t.stop());barcodeStream=null;}
-  barcodeScanning=false;
-  document.getElementById('barcodeVideo').style.display='none';
-  document.getElementById('barcodeBtn').textContent='📷 カメラでスキャン';
+  if(zxingReader) { try { zxingReader.reset(); } catch(e){} zxingReader = null; }
+  barcodeActive = false;
+  document.getElementById('barcodeViewport').style.display = 'none';
+  document.getElementById('barcodeBtn').textContent = '📷 カメラでスキャン';
+  document.getElementById('barcodeStatus').textContent = 'iPhoneでも読み取り可能です';
+}
+
+async function lookupBarcode(code) {
+  const status = document.getElementById('barcodeStatus');
+  status.textContent = `🔍 商品を検索中 (${code})...`;
+  showToast(`📦 バーコード読み取り: ${code}`);
+  try {
+    const res  = await fetch(`https://world.openfoodfacts.org/api/v0/product/${code}.json`);
+    const data = await res.json();
+    if(data.status === 1) {
+      const p    = data.product;
+      const name = p.product_name_ja || p.product_name || '';
+      document.getElementById('itemName').value = name;
+      // カテゴリー自動判定
+      const cats = (p.categories_tags||[]).join(',');
+      if(cats.includes('frozen'))           document.getElementById('itemCategory').value = '冷凍庫';
+      else if(cats.includes('beverages')||cats.includes('dairy')) document.getElementById('itemCategory').value = '冷蔵庫';
+      else if(cats.includes('snacks')||cats.includes('cereals')||cats.includes('condiment')) document.getElementById('itemCategory').value = 'パントリー';
+      // 写真
+      if(p.image_front_url) {
+        const prev = document.getElementById('photoPreview');
+        prev.src = p.image_front_url; prev.style.display = 'block';
+      }
+      status.textContent = name ? `✅ 「${name}」が見つかりました！` : '✅ 商品が見つかりました！名前を確認してください';
+      showToast('✅ 商品情報を自動入力しました');
+    } else {
+      status.textContent = `ℹ️ バーコード ${code} — データベースに未登録です。手動で入力してください。`;
+    }
+  } catch(e) {
+    status.textContent = '⚠️ 商品情報の取得に失敗しました。手動で入力してください。';
+  }
 }
 
 // ===== SIDEBAR =====
