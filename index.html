@@ -1090,31 +1090,72 @@ async function lookupBarcode(code) {
   const status = document.getElementById('barcodeStatus');
   status.textContent = `🔍 商品を検索中 (${code})...`;
   showToast(`📦 バーコード読み取り: ${code}`);
+
+  // ① OpenFoodFacts 日本語版
+  const result = await tryOpenFoodFacts(code);
+  if(result) { applyProductInfo(result, code); return; }
+
+  // ② OpenFoodFacts グローバル版（フォールバック）
+  const result2 = await tryOpenFoodFactsWorld(code);
+  if(result2) { applyProductInfo(result2, code); return; }
+
+  // ③ バーコードだけ入力欄にセット（手動入力を促す）
+  status.textContent = `ℹ️ バーコード ${code} — 商品名を手動で入力してください`;
+  document.getElementById('itemName').focus();
+  showToast('ℹ️ 商品名を入力してください');
+}
+
+async function tryOpenFoodFacts(code) {
   try {
-    const res  = await fetch(`https://world.openfoodfacts.org/api/v0/product/${code}.json`);
+    // 日本語フィールド優先で取得
+    const res = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${code}?fields=product_name,product_name_ja,categories_tags,image_front_url,brands,quantity`,
+      { signal: AbortSignal.timeout(5000) }
+    );
     const data = await res.json();
-    if(data.status === 1) {
-      const p    = data.product;
-      const name = p.product_name_ja || p.product_name || '';
-      document.getElementById('itemName').value = name;
-      // カテゴリー自動判定
-      const cats = (p.categories_tags||[]).join(',');
-      if(cats.includes('frozen'))           document.getElementById('itemCategory').value = '冷凍庫';
-      else if(cats.includes('beverages')||cats.includes('dairy')) document.getElementById('itemCategory').value = '冷蔵庫';
-      else if(cats.includes('snacks')||cats.includes('cereals')||cats.includes('condiment')) document.getElementById('itemCategory').value = 'パントリー';
-      // 写真
-      if(p.image_front_url) {
-        const prev = document.getElementById('photoPreview');
-        prev.src = p.image_front_url; prev.style.display = 'block';
-      }
-      status.textContent = name ? `✅ 「${name}」が見つかりました！` : '✅ 商品が見つかりました！名前を確認してください';
-      showToast('✅ 商品情報を自動入力しました');
-    } else {
-      status.textContent = `ℹ️ バーコード ${code} — データベースに未登録です。手動で入力してください。`;
-    }
-  } catch(e) {
-    status.textContent = '⚠️ 商品情報の取得に失敗しました。手動で入力してください。';
+    if(data.status === 1 && data.product) return data.product;
+  } catch(e) {}
+  return null;
+}
+
+async function tryOpenFoodFactsWorld(code) {
+  try {
+    const res = await fetch(
+      `https://world.openfoodfacts.org/api/v0/product/${code}.json`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    const data = await res.json();
+    if(data.status === 1 && data.product) return data.product;
+  } catch(e) {}
+  return null;
+}
+
+function applyProductInfo(p, code) {
+  const status = document.getElementById('barcodeStatus');
+
+  // 商品名（日本語優先）
+  const name = p.product_name_ja || p.product_name || p.brands || '';
+  // 内容量があれば付加
+  const qty  = p.quantity ? ` (${p.quantity})` : '';
+  document.getElementById('itemName').value = name + qty;
+
+  // カテゴリー自動判定
+  const cats = (p.categories_tags || []).join(',').toLowerCase();
+  if     (cats.includes('frozen') || cats.includes('冷凍'))                              document.getElementById('itemCategory').value = '冷凍庫';
+  else if(cats.includes('beverages') || cats.includes('dairy') || cats.includes('milk')) document.getElementById('itemCategory').value = '冷蔵庫';
+  else if(cats.includes('snacks') || cats.includes('cereals') || cats.includes('condiment') || cats.includes('sauces')) document.getElementById('itemCategory').value = 'パントリー';
+  else if(cats.includes('beauty') || cats.includes('hygiene') || cats.includes('household'))  document.getElementById('itemCategory').value = '日用品';
+
+  // 写真
+  if(p.image_front_url) {
+    const prev = document.getElementById('photoPreview');
+    prev.src = p.image_front_url;
+    prev.style.display = 'block';
   }
+
+  const displayName = name || code;
+  status.textContent = `✅ 「${displayName}」が見つかりました！`;
+  showToast('✅ 商品情報を自動入力しました');
 }
 
 // ===== SIDEBAR =====
