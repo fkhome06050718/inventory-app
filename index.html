@@ -16,7 +16,7 @@
 
 <title>おうち在庫管理</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 
 <style>
 :root {
@@ -1027,6 +1027,12 @@ async function startBarcode() {
     return;
   }
   const ZX = typeof ZXing !== 'undefined' ? ZXing : ZXingLibrary;
+
+  // BrowserMultiFormatReaderが存在するか確認
+  if(!ZX || !ZX.BrowserMultiFormatReader) {
+    status.textContent = '⚠️ ライブラリの初期化に失敗しました。ページを再読み込みしてください。';
+    return;
+  }
 
   // カメラ許可チェック
   try {
