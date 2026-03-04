@@ -16,7 +16,7 @@
 
 <title>おうち在庫管理</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.20.0/zxing.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
 
 <style>
 :root {
@@ -1022,10 +1022,11 @@ async function startBarcode() {
   const btn      = document.getElementById('barcodeBtn');
   const viewport = document.getElementById('barcodeViewport');
 
-  if(typeof ZXing === 'undefined') {
+  if(typeof ZXing === 'undefined' && typeof ZXingLibrary === 'undefined') {
     status.textContent = '⚠️ ライブラリ読み込み中です。少し待ってから再度タップしてください。';
     return;
   }
+  const ZX = typeof ZXing !== 'undefined' ? ZXing : ZXingLibrary;
 
   // カメラ許可チェック
   try {
@@ -1043,17 +1044,17 @@ async function startBarcode() {
 
   try {
     const hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.QR_CODE,
-      ZXing.BarcodeFormat.CODE_128,
-      ZXing.BarcodeFormat.CODE_39,
-      ZXing.BarcodeFormat.UPC_A,
+    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
+      ZX.BarcodeFormat.EAN_13,
+      ZX.BarcodeFormat.EAN_8,
+      ZX.BarcodeFormat.QR_CODE,
+      ZX.BarcodeFormat.CODE_128,
+      ZX.BarcodeFormat.CODE_39,
+      ZX.BarcodeFormat.UPC_A,
     ]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
 
-    zxingReader = new ZXing.BrowserMultiFormatReader(hints);
+    zxingReader = new ZX.BrowserMultiFormatReader(hints);
     await zxingReader.decodeFromConstraints(
       { video: { facingMode: 'environment', width:{ideal:1280}, height:{ideal:720} } },
       'barcodeVideo',
