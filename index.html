@@ -1009,6 +1009,16 @@ function startApp() {
   if(!offlineMode && SCRIPT_URL) {
     syncNow();
     setInterval(syncNow, 3 * 60 * 1000);
+
+    // 画面復帰時・タブ切り替え時に即座に同期
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible') syncNow();
+    });
+    // iPhoneでホーム画面から戻ったときに同期
+    window.addEventListener('focus', syncNow);
+    window.addEventListener('pageshow', e => {
+      if(e.persisted) syncNow(); // bfcache（戻るボタン）からの復帰
+    });
   } else {
     setSyncStatus('offline','オフライン');
   }
@@ -1022,9 +1032,12 @@ function setSyncStatus(state, text) {
 }
 
 async function api(action, data = {}) {
-  const params = new URLSearchParams({action, password: APP_PW});
+  // キャッシュ無効化のためタイムスタンプを付加
+  const params = new URLSearchParams({action, password: APP_PW, _t: Date.now()});
   Object.entries(data).forEach(([k,v]) => params.set(k, typeof v === 'object' ? JSON.stringify(v) : v));
-  const res = await fetch(SCRIPT_URL + '?' + params);
+  const res = await fetch(SCRIPT_URL + '?' + params, {
+    cache: 'no-store',  // ブラウザキャッシュを使わない
+  });
   if(!res.ok) throw new Error('Network error');
   const json = await res.json();
   if(json.error === 'unauthorized') throw new Error('unauthorized');
