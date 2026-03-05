@@ -260,6 +260,11 @@ body {
 .qty-btn { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--text); font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); font-family: inherit; }
 .qty-btn:active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); transform: scale(0.9); }
 .qty-value { font-size: 14px; font-weight: 700; min-width: 22px; text-align: center; }
+
+/* 開封バッジ */
+.opened-badge { display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:600; padding:2px 7px; border-radius:5px; background:#FFF3E0; color:#E65100; border:1px solid #FFB74D40; }
+.qty-row { display:flex; flex-direction:column; gap:5px; }
+.qty-label { font-size:9.5px; font-weight:700; color:var(--text-muted); letter-spacing:0.5px; text-transform:uppercase; }
 .item-actions { display: flex; gap: 5px; }
 .icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--text-muted); font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); }
 .icon-btn:active { background: var(--danger-light); color: var(--danger); }
@@ -615,9 +620,17 @@ select.form-input { cursor: pointer; }
           <input type="date" class="form-input" id="itemExpiry" />
         </div>
         <div class="form-group">
-          <label class="form-label">🔢 数量</label>
+          <label class="form-label">🔢 総数量</label>
           <input type="number" class="form-input" id="itemQty" value="1" min="0" inputmode="numeric" />
         </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">📦 うち開封中</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="number" class="form-input" id="itemOpened" value="0" min="0" inputmode="numeric" style="flex:1" />
+          <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">個が開封済み</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:5px">例：5個持っていて1個開封中 → 総数量5・開封中1</div>
       </div>
       <div class="form-group">
         <label class="form-label">メモ</label>
@@ -1110,6 +1123,19 @@ function render() {
   grid.innerHTML = list.map(item=>{
     const icon = ICONS[item.category]||'📂';
     const photo = item.photo ? `<img src="${item.photo}" alt="${esc(item.name)}">` : `<span style="font-size:36px">${icon}</span>`;
+    const opened   = Number(item.opened) || 0;
+    const unopened = Math.max(0, Number(item.qty) - opened);
+    const openedBadge = opened > 0
+      ? `<span class="opened-badge">📂 開封中 ${opened}</span>` : '';
+    const qtyDisplay = opened > 0
+      ? `<div class="qty-row">
+           <div style="display:flex;align-items:center;gap:4px">
+             <span class="qty-label">未開封</span>
+             <span class="qty-value">${unopened}</span>
+           </div>
+           <div>${openedBadge}</div>
+         </div>`
+      : `<span class="qty-value">${item.qty}</span>`;
     return `<div class="item-card">
       <div class="item-photo">${photo}</div>
       <div class="category-tag">${icon} ${esc(item.category)}</div>
@@ -1123,10 +1149,11 @@ function render() {
         <div class="item-footer">
           <div class="qty-control">
             <button class="qty-btn" onclick="chQty('${item.id}',-1)">−</button>
-            <span class="qty-value">${item.qty}</span>
+            ${qtyDisplay}
             <button class="qty-btn" onclick="chQty('${item.id}',1)">＋</button>
           </div>
           <div class="item-actions">
+            <button class="icon-btn" title="開封数を変更" onclick="changeOpened('${item.id}')" style="color:${opened>0?'#E65100':'var(--text-muted)'}">📂</button>
             <button class="icon-btn" onclick="editItem('${item.id}')" style="color:var(--text-muted)">✏️</button>
             <button class="icon-btn" onclick="delItem('${item.id}')">🗑️</button>
           </div>
@@ -1143,9 +1170,30 @@ async function chQty(id, d) {
   const item = items.find(i=>String(i.id)===String(id));
   if(!item) return;
   item.qty = Math.max(0, Number(item.qty)+d);
+  // 開封数が総数を超えないよう調整
+  if(Number(item.opened) > item.qty) item.opened = item.qty;
   localStorage.setItem('inventory_items', JSON.stringify(items));
   render();
   await pushQty(id, item.qty);
+}
+
+async function changeOpened(id) {
+  const item = items.find(i=>String(i.id)===String(id));
+  if(!item) return;
+  const current = Number(item.opened) || 0;
+  const input = prompt(
+    `「${item.name}」の開封数を入力してください\n（総数: ${item.qty}個）`,
+    current
+  );
+  if(input === null) return;
+  const val = parseInt(input);
+  if(isNaN(val) || val < 0) { showToast('⚠️ 0以上の数値を入力してください'); return; }
+  if(val > Number(item.qty)) { showToast(`⚠️ 総数（${item.qty}）を超えています`); return; }
+  item.opened = val;
+  localStorage.setItem('inventory_items', JSON.stringify(items));
+  render();
+  await pushItem(item);
+  showToast(val === 0 ? '📦 未開封に戻しました' : `📂 開封中: ${val}個 に設定しました`);
 }
 
 async function delItem(id) {
@@ -1165,6 +1213,7 @@ function editItem(id) {
   document.getElementById('itemCategory').value = item.category||'';
   document.getElementById('itemExpiry').value = item.expiry||'';
   document.getElementById('itemQty').value = item.qty||1;
+  document.getElementById('itemOpened').value = item.opened||0;
   document.getElementById('itemNote').value = item.note||'';
   const prev = document.getElementById('photoPreview');
   if(item.photo){prev.src=item.photo;prev.style.display='block';}
@@ -1179,7 +1228,7 @@ async function saveItem() {
   if(!category){showToast('⚠️ カテゴリーを選択してください');return;}
   const prev = document.getElementById('photoPreview');
   const photo = prev.style.display!=='none' ? prev.src : '';
-  const data = {name, category, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
+  const data = {name, category, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, opened:parseInt(document.getElementById('itemOpened').value)||0, note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
   let saved;
   if(editingId) {
     const idx = items.findIndex(i=>String(i.id)===String(editingId));
@@ -1235,6 +1284,7 @@ function openModal() {
   document.getElementById('itemCategory').value='';
   document.getElementById('itemExpiry').value='';
   document.getElementById('itemQty').value='1';
+  document.getElementById('itemOpened').value='0';
   document.getElementById('photoPreview').style.display='none';
   document.getElementById('modalOverlay').classList.add('open');
 }
