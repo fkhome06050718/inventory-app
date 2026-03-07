@@ -627,10 +627,14 @@ select.form-input { cursor: pointer; }
       <div class="form-group">
         <label class="form-label">📦 うち開封中</label>
         <div style="display:flex;align-items:center;gap:10px">
-          <input type="number" class="form-input" id="itemOpened" value="0" min="0" inputmode="numeric" style="flex:1" />
+          <input type="number" class="form-input" id="itemOpened" value="0" min="0" inputmode="numeric" style="flex:1" oninput="toggleOpenDateField()" />
           <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">個が開封済み</span>
         </div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:5px">例：5個持っていて1個開封中 → 総数量5・開封中1</div>
+      </div>
+      <div class="form-group" id="openDateGroup" style="display:none">
+        <label class="form-label">📅 開封日</label>
+        <input type="date" class="form-input" id="itemOpenDate" />
       </div>
       <div class="form-group">
         <label class="form-label">メモ</label>
@@ -1050,7 +1054,24 @@ async function syncNow() {
   try {
     const result = await api('getAll');
     if(result.items) {
-      items = result.items.map(i => ({...i, qty: Number(i.qty)||0}));
+      // サーバーデータとローカルの opened・openDate をマージ
+      // （スプレッドシート側にまだ列がない場合でもローカル値を保持）
+      const localMap = {};
+      items.forEach(i => { localMap[String(i.id)] = i; });
+
+      items = result.items.map(serverItem => {
+        const local = localMap[String(serverItem.id)];
+        return {
+          ...serverItem,
+          qty:      Number(serverItem.qty) || 0,
+          // サーバーに opened/openDate がなければローカル値を使う
+          opened:   (serverItem.opened !== '' && serverItem.opened !== undefined)
+                      ? Number(serverItem.opened)
+                      : (local ? Number(local.opened)||0 : 0),
+          openDate: serverItem.openDate || (local ? local.openDate||'' : ''),
+        };
+      });
+
       localStorage.setItem('inventory_items', JSON.stringify(items));
       render();
       const t = new Date();
@@ -1139,7 +1160,7 @@ function render() {
     const opened   = Number(item.opened) || 0;
     const unopened = Math.max(0, Number(item.qty) - opened);
     const openedBadge = opened > 0
-      ? `<span class="opened-badge">📂 開封中 ${opened}</span>` : '';
+      ? `<span class="opened-badge">📂 開封中 ${opened}${item.openDate ? `・${item.openDate}〜` : ''}</span>` : '';
     const qtyDisplay = opened > 0
       ? `<div class="qty-row">
            <div style="display:flex;align-items:center;gap:4px">
@@ -1203,6 +1224,17 @@ async function changeOpened(id) {
   if(isNaN(val) || val < 0) { showToast('⚠️ 0以上の数値を入力してください'); return; }
   if(val > Number(item.qty)) { showToast(`⚠️ 総数（${item.qty}）を超えています`); return; }
   item.opened = val;
+  // 開封数が1以上になったとき開封日を設定
+  if(val > 0) {
+    const today = new Date().toISOString().split('T')[0];
+    const dateInput = prompt(
+      `開封日を入力してください（例: ${today}）\n空欄でスキップ`,
+      item.openDate || today
+    );
+    item.openDate = dateInput !== null ? dateInput.trim() : (item.openDate || '');
+  } else {
+    item.openDate = '';
+  }
   localStorage.setItem('inventory_items', JSON.stringify(items));
   render();
   await pushItem(item);
@@ -1227,7 +1259,9 @@ function editItem(id) {
   document.getElementById('itemExpiry').value = item.expiry||'';
   document.getElementById('itemQty').value = item.qty||1;
   document.getElementById('itemOpened').value = item.opened||0;
+  document.getElementById('itemOpenDate').value = item.openDate||'';
   document.getElementById('itemNote').value = item.note||'';
+  toggleOpenDateField();
   const prev = document.getElementById('photoPreview');
   if(item.photo){prev.src=item.photo;prev.style.display='block';}
   else prev.style.display='none';
@@ -1241,7 +1275,8 @@ async function saveItem() {
   if(!category){showToast('⚠️ カテゴリーを選択してください');return;}
   const prev = document.getElementById('photoPreview');
   const photo = prev.style.display!=='none' ? prev.src : '';
-  const data = {name, category, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, opened:parseInt(document.getElementById('itemOpened').value)||0, note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
+  const openedVal = parseInt(document.getElementById('itemOpened').value)||0;
+  const data = {name, category, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, opened:openedVal, openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '', note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
   let saved;
   if(editingId) {
     const idx = items.findIndex(i=>String(i.id)===String(editingId));
@@ -1255,6 +1290,16 @@ async function saveItem() {
   localStorage.setItem('inventory_items', JSON.stringify(items));
   render(); closeModal();
   if(saved) await pushItem(saved);
+}
+
+function toggleOpenDateField() {
+  const opened = parseInt(document.getElementById('itemOpened').value) || 0;
+  const group  = document.getElementById('openDateGroup');
+  group.style.display = opened > 0 ? 'block' : 'none';
+  // 開封日が空欄なら今日の日付を自動入力
+  if(opened > 0 && !document.getElementById('itemOpenDate').value) {
+    document.getElementById('itemOpenDate').value = new Date().toISOString().split('T')[0];
+  }
 }
 
 // ===== FILTERS =====
@@ -1298,6 +1343,8 @@ function openModal() {
   document.getElementById('itemExpiry').value='';
   document.getElementById('itemQty').value='1';
   document.getElementById('itemOpened').value='0';
+  document.getElementById('itemOpenDate').value='';
+  document.getElementById('openDateGroup').style.display='none';
   document.getElementById('photoPreview').style.display='none';
   document.getElementById('modalOverlay').classList.add('open');
 }
