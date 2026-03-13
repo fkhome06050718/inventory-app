@@ -631,13 +631,16 @@ select.form-input { cursor: pointer; }
           <input type="number" class="form-input" id="itemQty" value="1" min="0" inputmode="numeric" />
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">📦 うち開封中</label>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="number" class="form-input" id="itemOpened" value="0" min="0" inputmode="numeric" style="flex:1" oninput="toggleOpenDateField()" />
-          <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">個が開封済み</span>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">📉 残り少ない在庫</label>
+          <input type="number" class="form-input" id="itemMinStock" value="1" min="0" inputmode="numeric" />
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">この数量以下で「残り少ない」に表示</div>
         </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:5px">例：5個持っていて1個開封中 → 総数量5・開封中1</div>
+        <div class="form-group">
+          <label class="form-label">📦 うち開封中</label>
+          <input type="number" class="form-input" id="itemOpened" value="0" min="0" inputmode="numeric" oninput="toggleOpenDateField()" />
+        </div>
       </div>
       <div class="form-group" id="openDateGroup" style="display:none">
         <label class="form-label">📅 開封日</label>
@@ -822,6 +825,34 @@ select.form-input { cursor: pointer; }
       <div style="display:flex;gap:10px">
         <button class="btn btn-ghost" onclick="resetExpirySettings()" style="flex:1">リセット</button>
         <button class="btn btn-primary" onclick="saveExpirySettings()" style="flex:2;justify-content:center">💾 保存する</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- OPENED MODAL -->
+<div class="modal-overlay" id="openedModalOverlay">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="openedModalTitle">📂 開封数を変更</div>
+      <button class="close-btn" onclick="closeOpenedModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">開封数</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="number" class="form-input" id="openedModalQty" value="0" min="0" inputmode="numeric" style="flex:1" oninput="toggleOpenedModalDate()" />
+          <span style="font-size:12px;color:var(--text-muted)">個</span>
+        </div>
+      </div>
+      <div class="form-group" id="openedModalDateGroup">
+        <label class="form-label">📅 開封日</label>
+        <input type="date" class="form-input" id="openedModalDate" />
+      </div>
+      <div style="display:flex;gap:10px;margin-top:6px">
+        <button class="btn btn-ghost" onclick="closeOpenedModal()" style="flex:1">キャンセル</button>
+        <button class="btn btn-primary" onclick="saveOpenedModal()" style="flex:2;justify-content:center">💾 保存する</button>
       </div>
     </div>
   </div>
@@ -1148,7 +1179,7 @@ function getFiltered() {
   if(q) list = list.filter(i => (i.name||'').toLowerCase().includes(q)||(i.note||'').toLowerCase().includes(q));
   if(currentFilter==='expiring') list=list.filter(i=>{if(!i.expiry)return false;const d=getExpiryInfo(i.expiry).days;return d>=0&&d<=EXPIRY_WARN;});
   else if(currentFilter==='expired') list=list.filter(i=>i.expiry&&getExpiryInfo(i.expiry).days<0);
-  else if(currentFilter==='low') list=list.filter(i=>Number(i.qty)<=1);
+  else if(currentFilter==='low') list=list.filter(i=>Number(i.qty) <= Number(i.minStock ?? 1));
   else if(currentFilter!=='all') list=list.filter(i=>i.category===currentFilter);
   list.sort((a,b)=>{
     if(currentSort==='name') return (a.name||'').localeCompare(b.name||'','ja');
@@ -1205,6 +1236,7 @@ function render() {
         <div class="item-name">${esc(item.name)}</div>
         <div class="item-meta">
           ${item.expiry?`<div class="item-meta-row">${expiryBadge(item.expiry)}</div>`:''}
+          ${Number(item.qty) <= Number(item.minStock ?? 1) ? `<div class="item-meta-row"><span class="expiry-badge" style="background:#FFF3E0;color:#E65100;border-color:#FFB74D40">📉 残り少ない</span></div>` : ''}
           ${item.note?`<div class="item-meta-row">📝 ${esc(item.note)}</div>`:''}
           <div class="item-meta-row">📅 ${item.date||'—'}</div>
         </div>
@@ -1239,35 +1271,47 @@ async function chQty(id, d) {
   await pushQty(id, item.qty);
 }
 
+let openedEditingId = null;
+
 async function changeOpened(id) {
   const item = items.find(i=>String(i.id)===String(id));
   if(!item) return;
-  const current = Number(item.opened) || 0;
-  const input = prompt(
-    `「${item.name}」の開封数を入力してください\n（総数: ${item.qty}個）`,
-    current
-  );
-  if(input === null) return;
-  const val = parseInt(input);
+  openedEditingId = id;
+  document.getElementById('openedModalTitle').textContent = `📂 ${item.name}`;
+  document.getElementById('openedModalQty').value = Number(item.opened) || 0;
+  document.getElementById('openedModalDate').value = item.openDate || new Date().toISOString().split('T')[0];
+  toggleOpenedModalDate();
+  document.getElementById('openedModalOverlay').classList.add('open');
+}
+
+function closeOpenedModal() {
+  document.getElementById('openedModalOverlay').classList.remove('open');
+  openedEditingId = null;
+}
+
+function toggleOpenedModalDate() {
+  const val = parseInt(document.getElementById('openedModalQty').value) || 0;
+  document.getElementById('openedModalDateGroup').style.display = val > 0 ? 'block' : 'none';
+}
+
+async function saveOpenedModal() {
+  const item = items.find(i=>String(i.id)===String(openedEditingId));
+  if(!item) return;
+  const val = parseInt(document.getElementById('openedModalQty').value);
   if(isNaN(val) || val < 0) { showToast('⚠️ 0以上の数値を入力してください'); return; }
   if(val > Number(item.qty)) { showToast(`⚠️ 総数（${item.qty}）を超えています`); return; }
   item.opened = val;
-  // 開封数が1以上になったとき開封日を設定
-  if(val > 0) {
-    const today = new Date().toISOString().split('T')[0];
-    const dateInput = prompt(
-      `開封日を入力してください（例: ${today}）\n空欄でスキップ`,
-      item.openDate || today
-    );
-    item.openDate = dateInput !== null ? dateInput.trim() : (item.openDate || '');
-  } else {
-    item.openDate = '';
-  }
+  item.openDate = val > 0 ? document.getElementById('openedModalDate').value : '';
   localStorage.setItem('inventory_items', JSON.stringify(items));
   render();
+  closeOpenedModal();
   await pushItem(item);
   showToast(val === 0 ? '📦 未開封に戻しました' : `📂 開封中: ${val}個 に設定しました`);
 }
+
+document.getElementById('openedModalOverlay').addEventListener('click', e => {
+  if(e.target === e.currentTarget) closeOpenedModal();
+});
 
 async function delItem(id) {
   if(!confirm('削除しますか？')) return;
@@ -1286,6 +1330,7 @@ function editItem(id) {
   document.getElementById('itemCategory').value = item.category||'';
   document.getElementById('itemExpiry').value = item.expiry||'';
   document.getElementById('itemQty').value = item.qty||1;
+  document.getElementById('itemMinStock').value = item.minStock ?? 1;
   document.getElementById('itemOpened').value = item.opened||0;
   document.getElementById('itemOpenDate').value = item.openDate||'';
   document.getElementById('itemNote').value = item.note||'';
@@ -1306,7 +1351,8 @@ async function saveItem() {
   const photo = prev.style.display!=='none' ? prev.src : '';
   const openedVal = parseInt(document.getElementById('itemOpened').value)||0;
   const subcat = document.getElementById('itemSubcategory').value || '';
-  const data = {name, category, subcategory:subcat, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, opened:openedVal, openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '', note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
+  const minStock = parseInt(document.getElementById('itemMinStock').value) ?? 1;
+  const data = {name, category, subcategory:subcat, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, minStock, opened:openedVal, openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '', note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
   let saved;
   if(editingId) {
     const idx = items.findIndex(i=>String(i.id)===String(editingId));
@@ -1374,6 +1420,7 @@ function openModal() {
   document.getElementById('itemSubcategory').innerHTML='<option value="">なし</option>';
   document.getElementById('itemExpiry').value='';
   document.getElementById('itemQty').value='1';
+  document.getElementById('itemMinStock').value='1';
   document.getElementById('itemOpened').value='0';
   document.getElementById('itemOpenDate').value='';
   document.getElementById('openDateGroup').style.display='none';
