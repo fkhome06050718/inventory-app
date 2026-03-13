@@ -1219,7 +1219,7 @@ function render() {
     const opened   = Number(item.opened) || 0;
     const unopened = Math.max(0, Number(item.qty) - opened);
     const openedBadge = opened > 0
-      ? `<span class="opened-badge">📂 開封中 ${opened}${item.openDate ? `・${item.openDate}〜` : ''}</span>` : '';
+      ? `<span class="opened-badge">📂 開封中 ${opened}${item.openDate ? `・${String(item.openDate).split('T')[0]}〜` : ''}</span>` : '';
     const qtyDisplay = opened > 0
       ? `<div class="qty-row">
            <div style="display:flex;align-items:center;gap:4px">
