@@ -544,6 +544,7 @@ select.form-input { cursor: pointer; }
       <div class="filter-row">
         <span class="filter-chip active" onclick="sortItems('name',this)">名前順</span>
         <span class="filter-chip" onclick="sortItems('expiry',this)">期限順</span>
+        <span class="filter-chip" onclick="sortItems('category',this)">カテゴリー順</span>
         <span class="filter-chip" onclick="sortItems('date',this)">登録日順</span>
         <span class="filter-chip" onclick="sortItems('qty',this)">数量順</span>
       </div>
@@ -601,8 +602,14 @@ select.form-input { cursor: pointer; }
       </div>
       <div class="form-group">
         <label class="form-label">カテゴリー *</label>
-        <select class="form-input" id="itemCategory">
+        <select class="form-input" id="itemCategory" onchange="renderSubcategorySelect()">
           <option value="">選択してください</option>
+        </select>
+      </div>
+      <div class="form-group" id="subcategoryGroup" style="display:none">
+        <label class="form-label">サブカテゴリー</label>
+        <select class="form-input" id="itemSubcategory">
+          <option value="">なし</option>
         </select>
       </div>
       <div class="form-group">
@@ -842,17 +849,29 @@ let deferredPrompt = null;
 
 // ===== CATEGORIES =====
 const DEFAULT_CATEGORIES = [
-  { name:'冷蔵庫',    icon:'🧊', default:true },
-  { name:'冷凍庫',    icon:'❄️', default:true },
-  { name:'パントリー', icon:'🥫', default:true },
-  { name:'日用品',    icon:'🧴', default:true },
-  { name:'薬・サプリ', icon:'💊', default:true },
-  { name:'その他',    icon:'📂', default:true },
+  { name:'冷蔵庫',    icon:'🧊', default:true, subs:['野菜・果物','肉・魚','乳製品','飲み物','調味料'] },
+  { name:'冷凍庫',    icon:'❄️', default:true, subs:['冷凍食品','アイス','肉・魚（冷凍）'] },
+  { name:'パントリー', icon:'🥫', default:true, subs:['缶詰・瓶詰','お菓子','米・麺・パン','調味料','飲み物（常温）'] },
+  { name:'日用品',    icon:'🧴', default:true, subs:['洗剤・洗濯','トイレ・お風呂','キッチン用品','文房具'] },
+  { name:'薬・サプリ', icon:'💊', default:true, subs:['風邪薬','胃腸薬','サプリメント','救急用品'] },
+  { name:'その他',    icon:'📂', default:true, subs:[] },
 ];
 let categories = JSON.parse(localStorage.getItem('inventory_categories') || 'null') || DEFAULT_CATEGORIES;
 
 function saveCategories() { localStorage.setItem('inventory_categories', JSON.stringify(categories)); }
 function getCatIcon(name) { const c = categories.find(c=>c.name===name); return c ? c.icon : '📂'; }
+function getCatSubs(name) { const c = categories.find(c=>c.name===name); return c && c.subs ? c.subs : []; }
+
+function renderSubcategorySelect(currentSub) {
+  const cat   = document.getElementById('itemCategory').value;
+  const subs  = getCatSubs(cat);
+  const group = document.getElementById('subcategoryGroup');
+  const sel   = document.getElementById('itemSubcategory');
+  if(!cat || subs.length === 0) { group.style.display = 'none'; return; }
+  group.style.display = 'block';
+  sel.innerHTML = '<option value="">なし</option>' +
+    subs.map(s => `<option value="${esc(s)}"${currentSub===s?' selected':''}>${esc(s)}</option>`).join('');
+}
 
 // サイドバーのナビとセレクトを再描画
 function renderCategoryUI() {
@@ -1036,11 +1055,14 @@ function setSyncStatus(state, text) {
 }
 
 async function api(action, data = {}) {
-  // キャッシュ無効化のためタイムスタンプを付加
-  const params = new URLSearchParams({action, password: APP_PW, _t: Date.now()});
-  Object.entries(data).forEach(([k,v]) => params.set(k, typeof v === 'object' ? JSON.stringify(v) : v));
-  const res = await fetch(SCRIPT_URL + '?' + params, {
-    cache: 'no-store',  // ブラウザキャッシュを使わない
+  if(offlineMode || !SCRIPT_URL) return;
+  // GASはGETのURL長に制限があるためPOSTで送信
+  const payload = Object.assign({action, password: APP_PW, _t: Date.now()}, data);
+  const res = await fetch(SCRIPT_URL, {
+    method: 'POST',
+    cache:  'no-store',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: new URLSearchParams(payload).toString(),
   });
   if(!res.ok) throw new Error('Network error');
   const json = await res.json();
@@ -1131,6 +1153,12 @@ function getFiltered() {
   list.sort((a,b)=>{
     if(currentSort==='name') return (a.name||'').localeCompare(b.name||'','ja');
     if(currentSort==='expiry'){if(!a.expiry&&!b.expiry)return 0;if(!a.expiry)return 1;if(!b.expiry)return -1;return a.expiry.localeCompare(b.expiry);}
+    if(currentSort==='category') {
+      const catOrder = categories.map(c=>c.name);
+      const ai = catOrder.indexOf(a.category), bi = catOrder.indexOf(b.category);
+      if(ai !== bi) return (ai===-1?999:ai) - (bi===-1?999:bi);
+      return (a.name||'').localeCompare(b.name||'','ja');
+    }
     if(currentSort==='date') return (b.date||'').localeCompare(a.date||'');
     if(currentSort==='qty') return Number(b.qty)-Number(a.qty);
     return 0;
@@ -1172,7 +1200,7 @@ function render() {
       : `<span class="qty-value">${item.qty}</span>`;
     return `<div class="item-card">
       <div class="item-photo">${photo}</div>
-      <div class="category-tag">${icon} ${esc(item.category)}</div>
+      <div class="category-tag">${icon} ${esc(item.category)}${item.subcategory ? ` › ${esc(item.subcategory)}` : ''}</div>
       <div class="item-body">
         <div class="item-name">${esc(item.name)}</div>
         <div class="item-meta">
@@ -1261,6 +1289,7 @@ function editItem(id) {
   document.getElementById('itemOpened').value = item.opened||0;
   document.getElementById('itemOpenDate').value = item.openDate||'';
   document.getElementById('itemNote').value = item.note||'';
+  renderSubcategorySelect(item.subcategory||'');
   toggleOpenDateField();
   const prev = document.getElementById('photoPreview');
   if(item.photo){prev.src=item.photo;prev.style.display='block';}
@@ -1276,7 +1305,8 @@ async function saveItem() {
   const prev = document.getElementById('photoPreview');
   const photo = prev.style.display!=='none' ? prev.src : '';
   const openedVal = parseInt(document.getElementById('itemOpened').value)||0;
-  const data = {name, category, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, opened:openedVal, openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '', note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
+  const subcat = document.getElementById('itemSubcategory').value || '';
+  const data = {name, category, subcategory:subcat, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, opened:openedVal, openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '', note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
   let saved;
   if(editingId) {
     const idx = items.findIndex(i=>String(i.id)===String(editingId));
@@ -1340,6 +1370,8 @@ function openModal() {
   document.getElementById('modalTitle').textContent = '商品を追加';
   ['itemName','itemNote'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('itemCategory').value='';
+  document.getElementById('subcategoryGroup').style.display='none';
+  document.getElementById('itemSubcategory').innerHTML='<option value="">なし</option>';
   document.getElementById('itemExpiry').value='';
   document.getElementById('itemQty').value='1';
   document.getElementById('itemOpened').value='0';
@@ -1805,16 +1837,31 @@ function renderCategoryList() {
   list.innerHTML = categories.map((c, i) => {
     const count = items.filter(item => item.category === c.name).length;
     const canDelete = !c.default && count === 0;
+    const subs = c.subs || [];
     return `
-    <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px">
-      <span style="font-size:20px;width:28px;text-align:center">${c.icon}</span>
-      <span style="flex:1;font-size:13.5px;font-weight:500">${esc(c.name)}</span>
-      <span style="font-size:11px;color:var(--text-muted);min-width:32px;text-align:right">${count}件</span>
-      <button onclick="editCategoryInline(${i})" style="background:none;border:none;cursor:pointer;font-size:15px;padding:4px 6px;border-radius:6px;color:var(--text-muted)" title="絵文字を変更">✏️</button>
-      ${canDelete
-        ? `<button onclick="deleteCategory(${i})" style="background:none;border:none;cursor:pointer;font-size:15px;padding:4px 6px;border-radius:6px;color:var(--danger)" title="削除">🗑️</button>`
-        : `<span style="width:30px"></span>`
-      }
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:2px">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
+        <span style="font-size:20px;width:28px;text-align:center">${c.icon}</span>
+        <span style="flex:1;font-size:13.5px;font-weight:600">${esc(c.name)}</span>
+        <span style="font-size:11px;color:var(--text-muted);min-width:32px;text-align:right">${count}件</span>
+        <button onclick="editCategoryInline(${i})" style="background:none;border:none;cursor:pointer;font-size:15px;padding:4px 6px;border-radius:6px;color:var(--text-muted)">✏️</button>
+        ${canDelete ? `<button onclick="deleteCategory(${i})" style="background:none;border:none;cursor:pointer;font-size:15px;padding:4px 6px;border-radius:6px;color:var(--danger)">🗑️</button>` : '<span style="width:30px"></span>'}
+      </div>
+      <!-- サブカテゴリー -->
+      <div style="background:var(--surface2);padding:6px 12px 8px 44px;border-top:1px solid var(--border)">
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">
+          ${subs.map((s,si) => `
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2px 8px">
+              ${esc(s)}
+              <button onclick="deleteSubcategory(${i},${si})" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--text-muted);padding:0;line-height:1">✕</button>
+            </span>`).join('')}
+          ${subs.length===0 ? '<span style="font-size:11px;color:var(--text-muted)">サブカテゴリーなし</span>' : ''}
+        </div>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="subInput${i}" placeholder="サブカテゴリーを追加..." style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;font-family:inherit;background:var(--surface)" />
+          <button onclick="addSubcategory(${i})" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer">＋</button>
+        </div>
+      </div>
     </div>`;
   }).join('');
 }
@@ -1842,12 +1889,33 @@ function deleteCategory(i) {
   showToast(`🗑️ 「${cat.name}」を削除しました`);
 }
 
+function addSubcategory(i) {
+  const input = document.getElementById(`subInput${i}`);
+  const name  = input.value.trim();
+  if(!name) return;
+  if(!categories[i].subs) categories[i].subs = [];
+  if(categories[i].subs.includes(name)) { showToast('⚠️ 既に存在します'); return; }
+  categories[i].subs.push(name);
+  saveCategories();
+  renderCategoryList();
+  renderSubcategorySelect();
+  showToast(`✅ 「${name}」を追加しました`);
+}
+
+function deleteSubcategory(i, si) {
+  categories[i].subs.splice(si, 1);
+  saveCategories();
+  renderCategoryList();
+  renderSubcategorySelect();
+  showToast('🗑️ サブカテゴリーを削除しました');
+}
+
 function addCategory() {
   const name = document.getElementById('newCategoryName').value.trim();
   const icon = document.getElementById('emojiPickerBtn').textContent;
   if(!name) { showToast('⚠️ カテゴリー名を入力してください'); return; }
   if(categories.find(c => c.name === name)) { showToast('⚠️ 同じ名前のカテゴリーが既に存在します'); return; }
-  categories.push({ name, icon, default: false });
+  categories.push({ name, icon, default: false, subs: [] });
   saveCategories();
   renderCategoryUI();
   render();
