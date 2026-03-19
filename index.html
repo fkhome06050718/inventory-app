@@ -1085,9 +1085,12 @@ function setSyncStatus(state, text) {
   document.getElementById('syncText').textContent = text;
 }
 
+// 未同期アイテムのキュー
+let pendingSync = JSON.parse(localStorage.getItem('inventory_pending') || '[]');
+function savePending() { localStorage.setItem('inventory_pending', JSON.stringify(pendingSync)); }
+
 async function api(action, data = {}) {
   if(offlineMode || !SCRIPT_URL) return;
-  // GASはGETのURL長に制限があるためPOSTで送信
   const payload = Object.assign({action, password: APP_PW, _t: Date.now()}, data);
   const res = await fetch(SCRIPT_URL, {
     method: 'POST',
@@ -1105,30 +1108,65 @@ async function syncNow() {
   if(offlineMode || !SCRIPT_URL) return;
   setSyncStatus('syncing','同期中...');
   try {
+    // ① 未同期キューを先にフラッシュ
+    if(pendingSync.length > 0) {
+      const queue = [...pendingSync];
+      for(const pending of queue) {
+        try {
+          // 写真はGASに送らない（ローカルのみ保持）
+          const itemForGas = Object.assign({}, pending);
+          delete itemForGas.photo;
+          await api('save', {item: JSON.stringify(itemForGas)});
+          pendingSync = pendingSync.filter(p => p.id !== pending.id);
+          savePending();
+        } catch(e) { break; } // ネットワークエラーなら中断
+      }
+    }
+
+    // ② サーバーから最新データを取得
     const result = await api('getAll');
     if(result.items) {
-      // サーバーデータとローカルの opened・openDate をマージ
-      // （スプレッドシート側にまだ列がない場合でもローカル値を保持）
+      // ローカルのマップ（写真・opened・openDate・pending保持用）
       const localMap = {};
       items.forEach(i => { localMap[String(i.id)] = i; });
 
-      items = result.items.map(serverItem => {
+      // サーバー側のIDセット
+      const serverIds = new Set(result.items.map(i => String(i.id)));
+
+      // サーバーアイテムにローカル専用データをマージ
+      const merged = result.items.map(serverItem => {
         const local = localMap[String(serverItem.id)];
-        return {
-          ...serverItem,
+        return Object.assign({}, serverItem, {
           qty:      Number(serverItem.qty) || 0,
-          // サーバーに opened/openDate がなければローカル値を使う
+          minStock: serverItem.minStock !== undefined ? Number(serverItem.minStock) : (local ? Number(local.minStock ?? 1) : 1),
           opened:   (serverItem.opened !== '' && serverItem.opened !== undefined)
                       ? Number(serverItem.opened)
                       : (local ? Number(local.opened)||0 : 0),
-          openDate: serverItem.openDate || (local ? local.openDate||'' : ''),
-        };
+          openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
+          subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
+          // 写真はローカルのみ保持（GASには送らない）
+          photo: local ? local.photo || '' : '',
+        });
       });
 
+      // ③ ローカルにあってサーバーにないアイテム＝未同期→保持してキューに積む
+      items.forEach(localItem => {
+        if(!serverIds.has(String(localItem.id))) {
+          merged.unshift(localItem); // ローカルアイテムを先頭に保持
+          // まだキューにない場合は追加
+          if(!pendingSync.find(p => p.id === localItem.id)) {
+            pendingSync.push(localItem);
+            savePending();
+          }
+        }
+      });
+
+      items = merged;
       localStorage.setItem('inventory_items', JSON.stringify(items));
       render();
       const t = new Date();
       setSyncStatus('synced', `${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')} 同期済み`);
+      if(pendingSync.length > 0) showToast(`⏳ 未同期アイテムが${pendingSync.length}件あります`);
     }
   } catch(e) {
     if(e.message === 'unauthorized') {
@@ -1141,9 +1179,30 @@ async function syncNow() {
 }
 
 async function pushItem(item) {
-  if(offlineMode || !SCRIPT_URL) return;
+  if(offlineMode || !SCRIPT_URL) {
+    // オフラインならキューに積む
+    if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(item);
+    else pendingSync = pendingSync.map(p => p.id === item.id ? item : p);
+    savePending();
+    return;
+  }
   setSyncStatus('syncing','同期中...');
-  try { await api('save', {item: JSON.stringify(item)}); setSyncStatus('synced','同期済み'); } catch(e) { setSyncStatus('error','同期エラー'); }
+  try {
+    // 写真はGASに送らない（URLサイズ削減・GAS制限回避）
+    const itemForGas = Object.assign({}, item);
+    delete itemForGas.photo;
+    await api('save', {item: JSON.stringify(itemForGas)});
+    // 成功したらキューから除去
+    pendingSync = pendingSync.filter(p => p.id !== item.id);
+    savePending();
+    setSyncStatus('synced','同期済み');
+  } catch(e) {
+    // 失敗したらキューに積んで次回同期時にリトライ
+    if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(item);
+    else pendingSync = pendingSync.map(p => p.id === item.id ? item : p);
+    savePending();
+    setSyncStatus('error','同期エラー（次回自動リトライ）');
+  }
 }
 
 async function pushDelete(id) {
