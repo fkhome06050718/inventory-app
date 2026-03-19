@@ -1162,8 +1162,8 @@ async function syncNow() {
                       : (local ? Number(local.opened)||0 : 0),
           openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
           subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
-          // 写真はローカルのみ保持（GASには送らない）
-          photo: local ? local.photo || '' : '',
+          // 写真はサーバー優先、なければローカルから補完
+          photo: serverItem.photo || (local ? local.photo || '' : ''),
         });
       });
 
@@ -1198,7 +1198,6 @@ async function syncNow() {
 
 async function pushItem(item) {
   if(offlineMode || !SCRIPT_URL) {
-    // オフラインならキューに積む
     if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(item);
     else pendingSync = pendingSync.map(p => p.id === item.id ? item : p);
     savePending();
@@ -1206,16 +1205,11 @@ async function pushItem(item) {
   }
   setSyncStatus('syncing','同期中...');
   try {
-    // 写真はGASに送らない（URLサイズ削減・GAS制限回避）
-    const itemForGas = Object.assign({}, item);
-    delete itemForGas.photo;
-    await api('save', {item: JSON.stringify(itemForGas)});
-    // 成功したらキューから除去
+    await api('save', {item: JSON.stringify(item)});
     pendingSync = pendingSync.filter(p => p.id !== item.id);
     savePending();
     setSyncStatus('synced','同期済み');
   } catch(e) {
-    // 失敗したらキューに積んで次回同期時にリトライ
     if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(item);
     else pendingSync = pendingSync.map(p => p.id === item.id ? item : p);
     savePending();
@@ -1542,12 +1536,12 @@ function previewPhoto(e) {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX=600; let w=img.width,h=img.height;
+      const MAX=400; let w=img.width,h=img.height;
       if(w>MAX||h>MAX){if(w>h){h=Math.round(h*MAX/w);w=MAX;}else{w=Math.round(w*MAX/h);h=MAX;}}
       canvas.width=w;canvas.height=h;
       canvas.getContext('2d').drawImage(img,0,0,w,h);
       const prev=document.getElementById('photoPreview');
-      prev.src=canvas.toDataURL('image/jpeg',0.75);prev.style.display='block';
+      prev.src=canvas.toDataURL('image/jpeg',0.5);prev.style.display='block';
       document.getElementById('photoUploadArea').classList.add('has-image');
     };
     img.src=ev.target.result;
