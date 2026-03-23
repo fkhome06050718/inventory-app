@@ -896,7 +896,44 @@ let editingId = null;
 let barcodeStream = null; // 互換性のため残す（未使用）
 let deferredPrompt = null;
 
-// ===== CATEGORIES =====
+// ===== PHOTO COMPRESSION =====
+// 写真を150px・品質0.3に圧縮してスプレッドシートに保存
+// 1枚あたり約3,000〜5,000文字（セル上限5万文字以内に収まる）
+function compressPhoto(dataUrl) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX = 150;
+      let w = img.width, h = img.height;
+      if(w > MAX || h > MAX) {
+        if(w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      res(canvas.toDataURL('image/jpeg', 0.3));
+    };
+    img.onerror = () => res(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+// 既存アイテムの写真を再圧縮して移行
+async function migratePhotos(items) {
+  let migrated = 0;
+  for(const item of items) {
+    if(item.photo && item.photo.startsWith('data:') && item.photo.length > 6000) {
+      item.photo = await compressPhoto(item.photo);
+      migrated++;
+    }
+  }
+  if(migrated > 0) {
+    localStorage.setItem('inventory_items', JSON.stringify(items));
+    showToast(`📸 写真${migrated}件を最適化しました`);
+  }
+  return items;
+}
 const DEFAULT_CATEGORIES = [
   { name:'冷蔵庫',    icon:'🧊', default:true, subs:['野菜・果物','肉・魚','乳製品','飲み物','調味料'] },
   { name:'冷凍庫',    icon:'❄️', default:true, subs:['冷凍食品','アイス','肉・魚（冷凍）'] },
@@ -1075,22 +1112,19 @@ function openSettings() {
   setSyncStatus('offline','オフライン');
 }
 
-function startApp() {
+async function startApp() {
+  // 既存写真を自動再圧縮して移行（初回のみ）
+  items = await migratePhotos(items);
   renderCategoryUI();
   render();
   if(!offlineMode && SCRIPT_URL) {
     syncNow();
     setInterval(syncNow, 3 * 60 * 1000);
-
-    // 画面復帰時・タブ切り替え時に即座に同期
     document.addEventListener('visibilitychange', () => {
       if(document.visibilityState === 'visible') syncNow();
     });
-    // iPhoneでホーム画面から戻ったときに同期
     window.addEventListener('focus', syncNow);
-    window.addEventListener('pageshow', e => {
-      if(e.persisted) syncNow(); // bfcache（戻るボタン）からの復帰
-    });
+    window.addEventListener('pageshow', e => { if(e.persisted) syncNow(); });
   } else {
     setSyncStatus('offline','オフライン');
   }
@@ -1268,7 +1302,7 @@ function getFiltered() {
   return list;
 }
 
-function render() {
+async function render() {
   const list = getFiltered();
   document.getElementById('statTotal').textContent = items.length;
   document.getElementById('statCategories').textContent = new Set(items.map(i=>i.category)).size;
@@ -1284,48 +1318,50 @@ function render() {
     grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">📭</div><h3>商品がありません</h3><p>＋ボタンから追加してください</p></div>`;
     return;
   }
-  grid.innerHTML = list.map(item=>{
-    const icon = ICONS[item.category]||'📂';
-    const photo = item.photo ? `<img src="${item.photo}" alt="${esc(item.name)}">` : `<span style="font-size:36px">${icon}</span>`;
-    const opened   = Number(item.opened) || 0;
-    const unopened = Math.max(0, Number(item.qty) - opened);
-    const openedBadge = opened > 0
-      ? `<span class="opened-badge">📂 開封中 ${opened}${item.openDate ? `・${String(item.openDate).split('T')[0]}〜` : ''}</span>` : '';
-    const qtyDisplay = opened > 0
-      ? `<div class="qty-row">
-           <div style="display:flex;align-items:center;gap:4px">
-             <span class="qty-label">未開封</span>
-             <span class="qty-value">${unopened}</span>
-           </div>
-           <div>${openedBadge}</div>
-         </div>`
-      : `<span class="qty-value">${item.qty}</span>`;
-    return `<div class="item-card">
-      <div class="item-photo">${photo}</div>
-      <div class="category-tag">${icon} ${esc(item.category)}${item.subcategory ? ` › ${esc(item.subcategory)}` : ''}</div>
-      <div class="item-body">
-        <div class="item-name">${esc(item.name)}</div>
-        <div class="item-meta">
-          ${item.expiry?`<div class="item-meta-row">${expiryBadge(item.expiry)}</div>`:''}
-          ${Number(item.qty) <= Number(item.minStock ?? 1) ? `<div class="item-meta-row"><span class="expiry-badge" style="background:#FFF3E0;color:#E65100;border-color:#FFB74D40">📉 残り少ない</span></div>` : ''}
-          ${item.note?`<div class="item-meta-row">📝 ${esc(item.note)}</div>`:''}
-          <div class="item-meta-row">📅 ${item.date||'—'}</div>
+  grid.innerHTML = list.map(item => renderItemCard(item, item.photo || null)).join('');
+}
+
+function renderItemCard(item, photoUrl) {
+  const icon = ICONS[item.category]||'📂';
+  const photoHtml = photoUrl ? `<img src="${photoUrl}" alt="${esc(item.name)}">` : `<span style="font-size:36px">${icon}</span>`;
+  const opened   = Number(item.opened) || 0;
+  const unopened = Math.max(0, Number(item.qty) - opened);
+  const openedBadge = opened > 0
+    ? `<span class="opened-badge">📂 開封中 ${opened}${item.openDate ? `・${String(item.openDate).split('T')[0]}〜` : ''}</span>` : '';
+  const qtyDisplay = opened > 0
+    ? `<div class="qty-row">
+         <div style="display:flex;align-items:center;gap:4px">
+           <span class="qty-label">未開封</span>
+           <span class="qty-value">${unopened}</span>
+         </div>
+         <div>${openedBadge}</div>
+       </div>`
+    : `<span class="qty-value">${item.qty}</span>`;
+  return `<div class="item-card" data-id="${item.id}">
+    <div class="item-photo">${photoHtml}</div>
+    <div class="category-tag">${icon} ${esc(item.category)}${item.subcategory ? ` › ${esc(item.subcategory)}` : ''}</div>
+    <div class="item-body">
+      <div class="item-name">${esc(item.name)}</div>
+      <div class="item-meta">
+        ${item.expiry?`<div class="item-meta-row">${expiryBadge(item.expiry)}</div>`:''}
+        ${Number(item.qty) <= Number(item.minStock ?? 1) ? `<div class="item-meta-row"><span class="expiry-badge" style="background:#FFF3E0;color:#E65100;border-color:#FFB74D40">📉 残り少ない</span></div>` : ''}
+        ${item.note?`<div class="item-meta-row">📝 ${esc(item.note)}</div>`:''}
+        <div class="item-meta-row">📅 ${item.date||'—'}</div>
+      </div>
+      <div class="item-footer">
+        <div class="qty-control">
+          <button class="qty-btn" onclick="chQty('${item.id}',-1)">−</button>
+          ${qtyDisplay}
+          <button class="qty-btn" onclick="chQty('${item.id}',1)">＋</button>
         </div>
-        <div class="item-footer">
-          <div class="qty-control">
-            <button class="qty-btn" onclick="chQty('${item.id}',-1)">−</button>
-            ${qtyDisplay}
-            <button class="qty-btn" onclick="chQty('${item.id}',1)">＋</button>
-          </div>
-          <div class="item-actions">
-            <button class="icon-btn" title="開封数を変更" onclick="changeOpened('${item.id}')" style="color:${opened>0?'#E65100':'var(--text-muted)'}">📂</button>
-            <button class="icon-btn" onclick="editItem('${item.id}')" style="color:var(--text-muted)">✏️</button>
-            <button class="icon-btn" onclick="delItem('${item.id}')">🗑️</button>
-          </div>
+        <div class="item-actions">
+          <button class="icon-btn" title="開封数を変更" onclick="changeOpened('${item.id}')" style="color:${opened>0?'#E65100':'var(--text-muted)'}">📂</button>
+          <button class="icon-btn" onclick="editItem('${item.id}')" style="color:var(--text-muted)">✏️</button>
+          <button class="icon-btn" onclick="delItem('${item.id}')">🗑️</button>
         </div>
       </div>
-    </div>`;
-  }).join('');
+    </div>
+  </div>`;
 }
 
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -1441,7 +1477,9 @@ async function saveItem() {
   if(!name){showToast('⚠️ 商品名を入力してください');return;}
   if(!category){showToast('⚠️ カテゴリーを選択してください');return;}
   const prev = document.getElementById('photoPreview');
-  const photo = prev.style.display!=='none' ? prev.src : '';
+  const rawPhoto = prev.style.display!=='none' ? prev.src : '';
+  // 写真を圧縮（既に小さければそのまま）
+  const photo = rawPhoto ? await compressPhoto(rawPhoto) : (editingId ? (items.find(i=>String(i.id)===String(editingId))||{}).photo||'' : '');
   const openedVal = parseInt(document.getElementById('itemOpened').value)||0;
   const subcat = document.getElementById('itemSubcategory').value || '';
   const minStock = parseInt(document.getElementById('itemMinStock').value) ?? 1;
@@ -1449,10 +1487,10 @@ async function saveItem() {
   let saved;
   if(editingId) {
     const idx = items.findIndex(i=>String(i.id)===String(editingId));
-    if(idx>=0){items[idx]={...items[idx],...data};saved=items[idx];}
+    if(idx>=0){items[idx]=Object.assign({},items[idx],data);saved=items[idx];}
     showToast('✅ 更新しました');
   } else {
-    saved = {id: Date.now().toString(), ...data};
+    saved = Object.assign({id: Date.now().toString()}, data);
     items.unshift(saved);
     showToast('✅ 追加しました');
   }
@@ -1532,19 +1570,11 @@ document.getElementById('modalOverlay').addEventListener('click', e=>{ if(e.targ
 function previewPhoto(e) {
   const file = e.target.files[0]; if(!file) return;
   const reader = new FileReader();
-  reader.onload = ev => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const MAX=400; let w=img.width,h=img.height;
-      if(w>MAX||h>MAX){if(w>h){h=Math.round(h*MAX/w);w=MAX;}else{w=Math.round(w*MAX/h);h=MAX;}}
-      canvas.width=w;canvas.height=h;
-      canvas.getContext('2d').drawImage(img,0,0,w,h);
-      const prev=document.getElementById('photoPreview');
-      prev.src=canvas.toDataURL('image/jpeg',0.5);prev.style.display='block';
-      document.getElementById('photoUploadArea').classList.add('has-image');
-    };
-    img.src=ev.target.result;
+  reader.onload = async ev => {
+    const compressed = await compressPhoto(ev.target.result);
+    const prev = document.getElementById('photoPreview');
+    prev.src = compressed; prev.style.display = 'block';
+    document.getElementById('photoUploadArea').classList.add('has-image');
   };
   reader.readAsDataURL(file);
 }
