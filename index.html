@@ -897,14 +897,14 @@ let barcodeStream = null; // 互換性のため残す（未使用）
 let deferredPrompt = null;
 
 // ===== PHOTO COMPRESSION =====
-// 写真を150px・品質0.3に圧縮してスプレッドシートに保存
-// 1枚あたり約3,000〜5,000文字（セル上限5万文字以内に収まる）
+// 写真を100px・品質0.2に圧縮してスプレッドシートに保存
+// 1枚あたり約1,000〜3,000文字（セル上限5万文字以内に確実に収まる）
 function compressPhoto(dataUrl) {
   return new Promise(res => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX = 150;
+      const MAX = 100;
       let w = img.width, h = img.height;
       if(w > MAX || h > MAX) {
         if(w > h) { h = Math.round(h * MAX / w); w = MAX; }
@@ -912,9 +912,18 @@ function compressPhoto(dataUrl) {
       }
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      res(canvas.toDataURL('image/jpeg', 0.3));
+      const result = canvas.toDataURL('image/jpeg', 0.2);
+      // 万が一まだ大きい場合はさらに縮小
+      if(result.length > 40000) {
+        const canvas2 = document.createElement('canvas');
+        canvas2.width = 80; canvas2.height = Math.round(h * 80 / w);
+        canvas2.getContext('2d').drawImage(canvas, 0, 0, canvas2.width, canvas2.height);
+        res(canvas2.toDataURL('image/jpeg', 0.15));
+      } else {
+        res(result);
+      }
     };
-    img.onerror = () => res(dataUrl);
+    img.onerror = () => res('');
     img.src = dataUrl;
   });
 }
@@ -923,7 +932,8 @@ function compressPhoto(dataUrl) {
 async function migratePhotos(items) {
   let migrated = 0;
   for(const item of items) {
-    if(item.photo && item.photo.startsWith('data:') && item.photo.length > 6000) {
+    if(item.photo && item.photo.startsWith('data:')) {
+      // サイズに関わらず全て再圧縮（新しい基準に統一）
       item.photo = await compressPhoto(item.photo);
       migrated++;
     }
