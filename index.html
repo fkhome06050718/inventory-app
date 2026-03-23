@@ -1151,6 +1151,10 @@ function setSyncStatus(state, text) {
 let pendingSync = JSON.parse(localStorage.getItem('inventory_pending') || '[]');
 function savePending() { localStorage.setItem('inventory_pending', JSON.stringify(pendingSync)); }
 
+// 削除済みIDを記録（同期時に復活しないよう保護）
+let deletedIds = new Set(JSON.parse(localStorage.getItem('inventory_deleted') || '[]'));
+function saveDeletedIds() { localStorage.setItem('inventory_deleted', JSON.stringify([...deletedIds])); }
+
 async function api(action, data = {}) {
   if(offlineMode || !SCRIPT_URL) return;
   const payload = Object.assign({action, password: APP_PW, _t: Date.now()}, data);
@@ -1175,13 +1179,22 @@ async function syncNow() {
       const queue = [...pendingSync];
       for(const pending of queue) {
         try {
-          // 写真はGASに送らない（ローカルのみ保持）
           const itemForGas = Object.assign({}, pending);
-          delete itemForGas.photo;
           await api('save', {item: JSON.stringify(itemForGas)});
           pendingSync = pendingSync.filter(p => p.id !== pending.id);
           savePending();
-        } catch(e) { break; } // ネットワークエラーなら中断
+        } catch(e) { break; }
+      }
+    }
+
+    // ① 削除キューのリトライ（前回失敗した削除を再送）
+    if(deletedIds.size > 0) {
+      for(const id of [...deletedIds]) {
+        try {
+          await api('delete', {id});
+          deletedIds.delete(id);
+          saveDeletedIds();
+        } catch(e) { break; }
       }
     }
 
@@ -1196,32 +1209,41 @@ async function syncNow() {
       const serverIds = new Set(result.items.map(i => String(i.id)));
 
       // サーバーアイテムにローカル専用データをマージ
-      const merged = result.items.map(serverItem => {
-        const local = localMap[String(serverItem.id)];
-        return Object.assign({}, serverItem, {
-          qty:      Number(serverItem.qty) || 0,
-          minStock: serverItem.minStock !== undefined ? Number(serverItem.minStock) : (local ? Number(local.minStock ?? 1) : 1),
-          opened:   (serverItem.opened !== '' && serverItem.opened !== undefined)
-                      ? Number(serverItem.opened)
-                      : (local ? Number(local.opened)||0 : 0),
-          openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
-          subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
-          // 写真はサーバー優先、なければローカルから補完
-          photo: serverItem.photo || (local ? local.photo || '' : ''),
+      // ただし削除済みIDは除外
+      const merged = result.items
+        .filter(serverItem => !deletedIds.has(String(serverItem.id)))
+        .map(serverItem => {
+          const local = localMap[String(serverItem.id)];
+          return Object.assign({}, serverItem, {
+            qty:      Number(serverItem.qty) || 0,
+            minStock: serverItem.minStock !== undefined ? Number(serverItem.minStock) : (local ? Number(local.minStock ?? 1) : 1),
+            opened:   (serverItem.opened !== '' && serverItem.opened !== undefined)
+                        ? Number(serverItem.opened)
+                        : (local ? Number(local.opened)||0 : 0),
+            openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
+            subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
+            photo: serverItem.photo || (local ? local.photo || '' : ''),
+          });
         });
-      });
 
-      // ③ ローカルにあってサーバーにないアイテム＝未同期→保持してキューに積む
+      // ローカルにあってサーバーにないアイテム
+      // → 削除済みでなければ未同期として保持
       items.forEach(localItem => {
-        if(!serverIds.has(String(localItem.id))) {
-          merged.unshift(localItem); // ローカルアイテムを先頭に保持
-          // まだキューにない場合は追加
+        const lid = String(localItem.id);
+        if(!serverIds.has(lid) && !deletedIds.has(lid)) {
+          merged.unshift(localItem);
           if(!pendingSync.find(p => p.id === localItem.id)) {
             pendingSync.push(localItem);
             savePending();
           }
         }
       });
+
+      // サーバーから消えた削除済みIDはリストから解放（サーバー削除完了）
+      deletedIds.forEach(id => {
+        if(!serverIds.has(id)) deletedIds.delete(id);
+      });
+      saveDeletedIds();
 
       items = merged;
       localStorage.setItem('inventory_items', JSON.stringify(items));
@@ -1263,7 +1285,13 @@ async function pushItem(item) {
 
 async function pushDelete(id) {
   if(offlineMode || !SCRIPT_URL) return;
-  try { await api('delete', {id}); } catch(e) {}
+  try {
+    await api('delete', {id});
+    deletedIds.delete(String(id));
+    saveDeletedIds();
+  } catch(e) {
+    // 失敗しても deletedIds に残るので次の syncNow 時に再試行
+  }
 }
 
 async function pushQty(id, qty) {
@@ -1449,6 +1477,12 @@ async function confirmDelete() {
   if(!deletingId) return;
   const id = deletingId;
   closeDeleteModal();
+  // 削除済みIDとして記録（同期時に復活しないよう保護）
+  deletedIds.add(String(id));
+  saveDeletedIds();
+  // pendingSyncからも除去
+  pendingSync = pendingSync.filter(p => String(p.id) !== String(id));
+  savePending();
   items = items.filter(i=>String(i.id)!==String(id));
   localStorage.setItem('inventory_items', JSON.stringify(items));
   render();
