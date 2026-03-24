@@ -897,14 +897,15 @@ let barcodeStream = null; // 互換性のため残す（未使用）
 let deferredPrompt = null;
 
 // ===== PHOTO COMPRESSION =====
-// 写真を100px・品質0.2に圧縮してスプレッドシートに保存
-// 1枚あたり約1,000〜3,000文字（セル上限5万文字以内に確実に収まる）
-function compressPhoto(dataUrl) {
+// Drive保存用：400px・品質0.7（全デバイスで綺麗に表示）
+// スプレッドシート直接保存用（フォールバック）：100px・品質0.2
+function compressPhoto(dataUrl, forDrive) {
   return new Promise(res => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX = 100;
+      const MAX = forDrive ? 400 : 100;
+      const quality = forDrive ? 0.7 : 0.2;
       let w = img.width, h = img.height;
       if(w > MAX || h > MAX) {
         if(w > h) { h = Math.round(h * MAX / w); w = MAX; }
@@ -912,35 +913,32 @@ function compressPhoto(dataUrl) {
       }
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      const result = canvas.toDataURL('image/jpeg', 0.2);
-      // 万が一まだ大きい場合はさらに縮小
-      if(result.length > 40000) {
-        const canvas2 = document.createElement('canvas');
-        canvas2.width = 80; canvas2.height = Math.round(h * 80 / w);
-        canvas2.getContext('2d').drawImage(canvas, 0, 0, canvas2.width, canvas2.height);
-        res(canvas2.toDataURL('image/jpeg', 0.15));
-      } else {
-        res(result);
-      }
+      res(canvas.toDataURL('image/jpeg', quality));
     };
     img.onerror = () => res('');
     img.src = dataUrl;
   });
 }
 
-// 既存アイテムの写真を再圧縮して移行
+// 既存アイテムの写真をDriveにアップロードして移行
 async function migratePhotos(items) {
   let migrated = 0;
   for(const item of items) {
-    if(item.photo && item.photo.startsWith('data:')) {
-      // サイズに関わらず全て再圧縮（新しい基準に統一）
-      item.photo = await compressPhoto(item.photo);
-      migrated++;
+    if(item.photo && item.photo.startsWith('data:') && SCRIPT_URL) {
+      try {
+        const compressed = await compressPhoto(item.photo, true); // Drive用品質
+        const result = await api('uploadPhoto', {id: item.id, photo: compressed});
+        if(result && result.url) {
+          item.photoUrl = result.url;
+          item.photo = '';
+          migrated++;
+        }
+      } catch(e) { /* 失敗はスキップ */ }
     }
   }
   if(migrated > 0) {
     localStorage.setItem('inventory_items', JSON.stringify(items));
-    showToast(`📸 写真${migrated}件を最適化しました`);
+    showToast(`📸 写真${migrated}件をGoogle Driveに移行しました`);
   }
   return items;
 }
@@ -1222,7 +1220,13 @@ async function syncNow() {
                         : (local ? Number(local.opened)||0 : 0),
             openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
             subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
-            photo: serverItem.photo || (local ? local.photo || '' : ''),
+            // DriveURL（http）はphotoUrlに、base64はphotoに
+            photoUrl: (serverItem.photo && serverItem.photo.startsWith('http'))
+                        ? serverItem.photo
+                        : (local ? local.photoUrl || '' : ''),
+            photo: (serverItem.photo && serverItem.photo.startsWith('data:'))
+                        ? serverItem.photo
+                        : (local ? local.photo || '' : ''),
           });
         });
 
@@ -1356,7 +1360,7 @@ async function render() {
     grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">📭</div><h3>商品がありません</h3><p>＋ボタンから追加してください</p></div>`;
     return;
   }
-  grid.innerHTML = list.map(item => renderItemCard(item, item.photo || null)).join('');
+  grid.innerHTML = list.map(item => renderItemCard(item, item.photoUrl || item.photo || null)).join('');
 }
 
 function renderItemCard(item, photoUrl) {
@@ -1510,7 +1514,8 @@ function editItem(id) {
   renderSubcategorySelect(item.subcategory||'');
   toggleOpenDateField();
   const prev = document.getElementById('photoPreview');
-  if(item.photo){prev.src=item.photo;prev.style.display='block';}
+  const photoSrc = item.photoUrl || item.photo || '';
+  if(photoSrc){prev.src=photoSrc;prev.style.display='block';}
   else prev.style.display='none';
   document.getElementById('modalOverlay').classList.add('open');
 }
@@ -1522,12 +1527,23 @@ async function saveItem() {
   if(!category){showToast('⚠️ カテゴリーを選択してください');return;}
   const prev = document.getElementById('photoPreview');
   const rawPhoto = prev.style.display!=='none' ? prev.src : '';
-  // 写真を圧縮（既に小さければそのまま）
-  const photo = rawPhoto ? await compressPhoto(rawPhoto) : (editingId ? (items.find(i=>String(i.id)===String(editingId))||{}).photo||'' : '');
+  // 既存アイテムのphotoUrlを保持
+  const existingItem = editingId ? items.find(i=>String(i.id)===String(editingId)) : null;
+  const existingPhotoUrl = existingItem ? existingItem.photoUrl || '' : '';
   const openedVal = parseInt(document.getElementById('itemOpened').value)||0;
   const subcat = document.getElementById('itemSubcategory').value || '';
   const minStock = parseInt(document.getElementById('itemMinStock').value) ?? 1;
-  const data = {name, category, subcategory:subcat, expiry:document.getElementById('itemExpiry').value, qty:parseInt(document.getElementById('itemQty').value)||1, minStock, opened:openedVal, openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '', note:document.getElementById('itemNote').value.trim(), photo, date:new Date().toISOString().split('T')[0]};
+  const data = {
+    name, category, subcategory:subcat,
+    expiry: document.getElementById('itemExpiry').value,
+    qty: parseInt(document.getElementById('itemQty').value)||1,
+    minStock, opened: openedVal,
+    openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '',
+    note: document.getElementById('itemNote').value.trim(),
+    photo: '',
+    photoUrl: rawPhoto ? '' : existingPhotoUrl, // 新写真があればリセット、なければ既存URLを保持
+    date: new Date().toISOString().split('T')[0]
+  };
   let saved;
   if(editingId) {
     const idx = items.findIndex(i=>String(i.id)===String(editingId));
@@ -1540,7 +1556,29 @@ async function saveItem() {
   }
   localStorage.setItem('inventory_items', JSON.stringify(items));
   render(); closeModal();
-  if(saved) await pushItem(saved);
+  if(saved) {
+    await pushItem(saved);
+    // 新しい写真があればDriveにアップロード
+    if(rawPhoto && SCRIPT_URL) {
+      try {
+        const compressed = await compressPhoto(rawPhoto, true);
+        const result = await api('uploadPhoto', {id: saved.id, photo: compressed});
+        if(result && result.url) {
+          const idx = items.findIndex(i=>String(i.id)===String(saved.id));
+          if(idx>=0) { items[idx].photoUrl = result.url; items[idx].photo = ''; }
+          localStorage.setItem('inventory_items', JSON.stringify(items));
+          render();
+          showToast('📸 写真をDriveに保存しました');
+        }
+      } catch(e) { /* Drive失敗時はローカルに小さく保存 */
+        const fallback = await compressPhoto(rawPhoto, false);
+        const idx = items.findIndex(i=>String(i.id)===String(saved.id));
+        if(idx>=0) { items[idx].photo = fallback; items[idx].photoUrl = ''; }
+        localStorage.setItem('inventory_items', JSON.stringify(items));
+        render();
+      }
+    }
+  }
 }
 
 function toggleOpenDateField() {
