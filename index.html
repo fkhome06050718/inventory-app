@@ -897,15 +897,15 @@ let barcodeStream = null; // 互換性のため残す（未使用）
 let deferredPrompt = null;
 
 // ===== PHOTO COMPRESSION =====
-// Drive保存用：800px・品質0.85（高画質）
+// Drive保存用：1200px・品質0.92（高画質）
 // スプレッドシート直接保存用（フォールバック）：100px・品質0.2
 function compressPhoto(dataUrl, forDrive) {
   return new Promise(res => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX = forDrive ? 800 : 100;
-      const quality = forDrive ? 0.85 : 0.2;
+      const MAX = forDrive ? 1200 : 100;
+      const quality = forDrive ? 0.92 : 0.2;
       let w = img.width, h = img.height;
       if(w > MAX || h > MAX) {
         if(w > h) { h = Math.round(h * MAX / w); w = MAX; }
@@ -1121,8 +1121,6 @@ function openSettings() {
 }
 
 async function startApp() {
-  // 既存写真を自動再圧縮して移行（初回のみ）
-  items = await migratePhotos(items);
   renderCategoryUI();
   render();
   if(!offlineMode && SCRIPT_URL) {
@@ -1133,6 +1131,8 @@ async function startApp() {
     });
     window.addEventListener('focus', syncNow);
     window.addEventListener('pageshow', e => { if(e.persisted) syncNow(); });
+    // 写真移行はバックグラウンドで実行（UIをブロックしない）
+    migratePhotos(items);
   } else {
     setSyncStatus('offline','オフライン');
   }
