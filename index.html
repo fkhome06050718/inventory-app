@@ -1558,10 +1558,11 @@ async function saveItem() {
   render(); closeModal();
   if(saved) {
     await pushItem(saved);
-    // 新しい写真があればDriveにアップロード
-    if(rawPhoto && SCRIPT_URL) {
+    // 新しい写真があればDriveにアップロード（元画像から圧縮して高画質）
+    const photoSource = originalPhotoData || rawPhoto;
+    if(photoSource && SCRIPT_URL) {
       try {
-        const compressed = await compressPhoto(rawPhoto, true);
+        const compressed = await compressPhoto(photoSource, true); // 400px・0.7
         const result = await api('uploadPhoto', {id: saved.id, photo: compressed});
         if(result && result.url) {
           const idx = items.findIndex(i=>String(i.id)===String(saved.id));
@@ -1570,13 +1571,14 @@ async function saveItem() {
           render();
           showToast('📸 写真をDriveに保存しました');
         }
-      } catch(e) { /* Drive失敗時はローカルに小さく保存 */
-        const fallback = await compressPhoto(rawPhoto, false);
+      } catch(e) {
+        const fallback = await compressPhoto(photoSource, false);
         const idx = items.findIndex(i=>String(i.id)===String(saved.id));
         if(idx>=0) { items[idx].photo = fallback; items[idx].photoUrl = ''; }
         localStorage.setItem('inventory_items', JSON.stringify(items));
         render();
       }
+      originalPhotoData = null;
     }
   }
 }
@@ -1626,6 +1628,7 @@ function bnFilter(filter, btn) {
 // ===== MODAL =====
 function openModal() {
   editingId = null;
+  originalPhotoData = null;
   document.getElementById('modalTitle').textContent = '商品を追加';
   ['itemName','itemNote'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('itemCategory').value='';
@@ -1643,19 +1646,24 @@ function openModal() {
 
 function closeModal() {
   document.getElementById('modalOverlay').classList.remove('open');
+  originalPhotoData = null;
   stopBarcode();
 }
 
 document.getElementById('modalOverlay').addEventListener('click', e=>{ if(e.target===e.currentTarget) closeModal(); });
 
 // ===== PHOTO =====
+let originalPhotoData = null; // Drive用に元画像を保持
+
 function previewPhoto(e) {
   const file = e.target.files[0]; if(!file) return;
   const reader = new FileReader();
   reader.onload = async ev => {
-    const compressed = await compressPhoto(ev.target.result, true); // Drive用品質（400px・0.7）
+    originalPhotoData = ev.target.result; // 元画像を保持
+    // プレビュー表示用は軽く圧縮
+    const preview = await compressPhoto(ev.target.result, true);
     const prev = document.getElementById('photoPreview');
-    prev.src = compressed; prev.style.display = 'block';
+    prev.src = preview; prev.style.display = 'block';
     document.getElementById('photoUploadArea').classList.add('has-image');
   };
   reader.readAsDataURL(file);
