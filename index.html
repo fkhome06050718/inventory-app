@@ -1653,7 +1653,7 @@ function previewPhoto(e) {
   const file = e.target.files[0]; if(!file) return;
   const reader = new FileReader();
   reader.onload = async ev => {
-    const compressed = await compressPhoto(ev.target.result);
+    const compressed = await compressPhoto(ev.target.result, true); // Drive用品質（400px・0.7）
     const prev = document.getElementById('photoPreview');
     prev.src = compressed; prev.style.display = 'block';
     document.getElementById('photoUploadArea').classList.add('has-image');
