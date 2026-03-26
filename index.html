@@ -1262,42 +1262,53 @@ async function syncNow() {
   if(offlineMode || !SCRIPT_URL) return;
   setSyncStatus('syncing','同期中...');
   try {
-    // ① 未同期キューを先にフラッシュ
+    // ① 削除キューを最初に処理（getAll前に必ず完了させる）
+    if(deletedIds.size > 0) {
+      const idsToDelete = [...deletedIds]; // コピーしてから処理（Set変更の不具合防止）
+      for(const id of idsToDelete) {
+        try {
+          const res = await api('delete', {id});
+          // 成功またはnot foundなら削除完了とみなす
+          if(res && (res.success || res.error === 'not found')) {
+            deletedIds.delete(id);
+            saveDeletedIds();
+          }
+        } catch(e) { /* ネットワークエラーなら次回リトライ */ }
+      }
+    }
+
+    // ② 未同期キューをフラッシュ
     if(pendingSync.length > 0) {
       const queue = [...pendingSync];
       for(const pending of queue) {
         try {
-          const itemForGas = Object.assign({}, pending);
-          await api('save', {item: JSON.stringify(itemForGas)});
+          await api('save', {item: JSON.stringify(pending)});
           pendingSync = pendingSync.filter(p => p.id !== pending.id);
           savePending();
         } catch(e) { break; }
       }
     }
 
-    // ① 削除キューのリトライ（前回失敗した削除を再送）
-    // deletedIdsからの解放はgetAll後にサーバー側で確認してから行う
-    if(deletedIds.size > 0) {
-      for(const id of [...deletedIds]) {
-        try {
-          await api('delete', {id});
-          // ここではdeletedIdsから削除しない（getAll後に確認）
-        } catch(e) { break; }
-      }
-    }
-
-    // ② サーバーから最新データを取得
+    // ③ サーバーから最新データを取得
     const result = await api('getAll');
     if(result.items) {
-      // ローカルのマップ（写真・opened・openDate・pending保持用）
       const localMap = {};
       items.forEach(i => { localMap[String(i.id)] = i; });
 
-      // サーバー側のIDセット
       const serverIds = new Set(result.items.map(i => String(i.id)));
 
-      // サーバーアイテムにローカル専用データをマージ
-      // ただし削除済みIDは除外
+      // deletedIdsにあるIDはサーバーに残っていても除外＆再削除
+      for(const id of [...deletedIds]) {
+        if(serverIds.has(id)) {
+          // まだサーバーに残っているので再度削除
+          try { await api('delete', {id}); } catch(e) {}
+        } else {
+          // サーバーから消えた → 削除完了
+          deletedIds.delete(id);
+          saveDeletedIds();
+        }
+      }
+
       const merged = result.items
         .filter(serverItem => !deletedIds.has(String(serverItem.id)))
         .map(serverItem => {
@@ -1310,7 +1321,6 @@ async function syncNow() {
                         : (local ? Number(local.opened)||0 : 0),
             openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
             subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
-            // DriveURL（http）はphotoUrlに、base64はphotoに
             photoUrl: (serverItem.photo && serverItem.photo.startsWith('http'))
                         ? serverItem.photo
                         : (local ? local.photoUrl || '' : ''),
@@ -1320,8 +1330,7 @@ async function syncNow() {
           });
         });
 
-      // ローカルにあってサーバーにないアイテム
-      // → 削除済みでなければ未同期として保持
+      // ローカルにあってサーバーにない＆削除済みでない → 未同期として保持
       items.forEach(localItem => {
         const lid = String(localItem.id);
         if(!serverIds.has(lid) && !deletedIds.has(lid)) {
@@ -1332,12 +1341,6 @@ async function syncNow() {
           }
         }
       });
-
-      // サーバーから消えた削除済みIDはリストから解放（サーバー削除完了）
-      deletedIds.forEach(id => {
-        if(!serverIds.has(id)) deletedIds.delete(id);
-      });
-      saveDeletedIds();
 
       items = merged;
       localStorage.setItem('inventory_items', JSON.stringify(items));
