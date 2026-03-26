@@ -1678,7 +1678,15 @@ async function saveItem() {
       showToast('📸 写真をアップロード中...');
       try {
         const compressed = await compressPhoto(photoSourceForUpload, true);
-        const result = await api('uploadPhoto', {id: saved.id, photo: compressed});
+        // api()のofflineチェックを避けて直接fetchする
+        const res = await fetch(SCRIPT_URL, {
+          method: 'POST',
+          cache: 'no-store',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: saved.id, photo: compressed}),
+        });
+        if(!res.ok) throw new Error('HTTP ' + res.status);
+        const result = await res.json();
         if(result && result.url) {
           const idx = items.findIndex(i=>String(i.id)===String(saved.id));
           if(idx>=0) { items[idx].photoUrl = result.url; items[idx].photo = ''; }
@@ -1686,13 +1694,11 @@ async function saveItem() {
           render();
           showToast('📸 写真をDriveに保存しました');
         } else {
-          throw new Error(result?.error || 'Drive保存失敗');
+          throw new Error(result?.error || 'URLが返されませんでした');
         }
       } catch(e) {
         console.error('Drive upload error:', e);
-        // Drive失敗時はlocalStorageにそこそこの品質で保存（フォールバック）
         try {
-          // フォールバック: 600px・品質0.7（スプレッドシートに入る程度）
           const fallback = await compressPhoto(photoSourceForUpload, 'fallback');
           const idx = items.findIndex(i=>String(i.id)===String(saved.id));
           if(idx>=0) { items[idx].photo = fallback; items[idx].photoUrl = ''; }
