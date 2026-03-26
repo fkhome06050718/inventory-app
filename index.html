@@ -265,6 +265,29 @@ body {
 .opened-badge { display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:600; padding:2px 7px; border-radius:5px; background:#FFF3E0; color:#E65100; border:1px solid #FFB74D40; }
 .qty-row { display:flex; flex-direction:column; gap:5px; }
 .qty-label { font-size:9.5px; font-weight:700; color:var(--text-muted); letter-spacing:0.5px; text-transform:uppercase; }
+
+/* 一括選択モード */
+.bulk-mode .item-card { cursor:pointer; }
+.bulk-mode .item-card.selected { outline:2.5px solid var(--accent); background:var(--accent-light); }
+.bulk-toolbar { display:none; position:fixed; bottom:calc(var(--safe-bottom) + 72px); left:50%; transform:translateX(-50%); background:var(--text); color:#fff; border-radius:40px; padding:10px 18px; gap:12px; align-items:center; z-index:500; box-shadow:0 4px 20px rgba(0,0,0,0.3); white-space:nowrap; }
+.bulk-toolbar.show { display:flex; }
+.bulk-toolbar button { background:rgba(255,255,255,0.15); border:none; color:#fff; border-radius:20px; padding:6px 14px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+.bulk-toolbar button:hover { background:rgba(255,255,255,0.25); }
+.bulk-toolbar .bulk-danger { background:rgba(220,50,50,0.7); }
+
+/* テンプレート */
+.template-item { display:flex; align-items:center; gap:10px; background:var(--surface2); border:1.5px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; cursor:pointer; transition:all var(--transition); }
+.template-item:hover { border-color:var(--accent); background:var(--accent-light); }
+.template-icon { font-size:22px; width:30px; text-align:center; flex-shrink:0; }
+.template-name { flex:1; font-size:13.5px; font-weight:600; }
+.template-meta { font-size:11px; color:var(--text-muted); }
+
+/* 買い物リスト */
+.shopping-item { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+.shopping-item:last-child { border-bottom:none; }
+.shopping-check { width:22px; height:22px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
+.shopping-name { flex:1; font-size:13.5px; font-weight:500; }
+.shopping-reason { font-size:11px; color:var(--text-muted); margin-top:2px; }
 .item-actions { display: flex; gap: 5px; }
 .icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--text-muted); font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); }
 .icon-btn:active { background: var(--danger-light); color: var(--danger); }
@@ -507,6 +530,9 @@ select.form-input { cursor: pointer; }
       <button class="nav-item" onclick="filterExpiry('low',this)"><span class="icon">📉</span>残り少ない</button>
     </div>
     <div class="sidebar-bottom">
+      <button class="nav-item" onclick="openShoppingList()"><span class="icon">🛒</span>買い物リスト</button>
+      <button class="nav-item" onclick="openTemplateModal()"><span class="icon">⭐</span>テンプレート</button>
+      <button class="nav-item" onclick="toggleBulkMode()"><span class="icon">☑️</span>一括操作</button>
       <button class="nav-item" onclick="syncNow()"><span class="icon">🔄</span>今すぐ同期</button>
       <button class="nav-item" onclick="openReceiptModal()"><span class="icon">🧾</span>レシートから登録</button>
       <button class="nav-item" onclick="openCategoryModal()"><span class="icon">📂</span>カテゴリー管理</button>
@@ -856,6 +882,51 @@ select.form-input { cursor: pointer; }
       </div>
     </div>
   </div>
+</div>
+
+<!-- SHOPPING LIST MODAL -->
+<div class="modal-overlay" id="shoppingModalOverlay">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">🛒 買い物リスト</div>
+      <button class="close-btn" onclick="closeShoppingList()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="shoppingListContent"></div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn btn-ghost" onclick="shareShoppingList()" style="flex:1;justify-content:center">📤 共有</button>
+        <button class="btn btn-primary" onclick="copyShoppingList()" style="flex:1;justify-content:center">📋 コピー</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TEMPLATE MODAL -->
+<div class="modal-overlay" id="templateModalOverlay">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title" id="templateModalTitle">⭐ テンプレート</div>
+      <button class="close-btn" onclick="closeTemplateModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="templateListContent"></div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <button class="btn btn-ghost" onclick="saveAsTemplate()" style="width:100%;justify-content:center">
+          ⭐ 現在の商品をテンプレートに保存
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BULK TOOLBAR -->
+<div class="bulk-toolbar" id="bulkToolbar">
+  <span id="bulkCount" style="font-size:13px;font-weight:600">0件選択</span>
+  <button onclick="bulkQtyChange()">数量変更</button>
+  <button onclick="bulkDelete()" class="bulk-danger">削除</button>
+  <button onclick="toggleBulkMode()" style="background:rgba(255,255,255,0.1)">✕ キャンセル</button>
 </div>
 
 <!-- DELETE CONFIRM MODAL -->
@@ -1379,7 +1450,7 @@ function renderItemCard(item, photoUrl) {
          <div>${openedBadge}</div>
        </div>`
     : `<span class="qty-value">${item.qty}</span>`;
-  return `<div class="item-card" data-id="${item.id}">
+  return `<div class="item-card${bulkSelected.has(String(item.id))?' selected':''}" data-id="${item.id}" onclick="if(bulkMode){toggleBulkSelect('${item.id}');return;}">
     <div class="item-photo">${photoHtml}</div>
     <div class="category-tag">${icon} ${esc(item.category)}${item.subcategory ? ` › ${esc(item.subcategory)}` : ''}</div>
     <div class="item-body">
@@ -1479,12 +1550,31 @@ function closeDeleteModal() {
 
 async function confirmDelete() {
   if(!deletingId) return;
+
+  if(deletingId === '__bulk__') {
+    // 一括削除
+    const ids = [...bulkSelected];
+    closeDeleteModal();
+    for(const id of ids) {
+      deletedIds.add(String(id));
+      pendingSync = pendingSync.filter(p => String(p.id) !== String(id));
+    }
+    saveDeletedIds(); savePending();
+    items = items.filter(i => !ids.includes(String(i.id)));
+    localStorage.setItem('inventory_items', JSON.stringify(items));
+    bulkSelected.clear();
+    updateBulkCount();
+    render();
+    showToast(`🗑️ ${ids.length}件を削除しました`);
+    for(const id of ids) await pushDelete(id);
+    return;
+  }
+
+  // 通常削除
   const id = deletingId;
   closeDeleteModal();
-  // 削除済みIDとして記録（同期時に復活しないよう保護）
   deletedIds.add(String(id));
   saveDeletedIds();
-  // pendingSyncからも除去
   pendingSync = pendingSync.filter(p => String(p.id) !== String(id));
   savePending();
   items = items.filter(i=>String(i.id)!==String(id));
@@ -2309,6 +2399,218 @@ function openApiKeySetting() {
     showToast('⚠️ 正しいAPIキーを入力してください（sk-ant- から始まるもの）');
   }
 }
+
+// ===== ① 買い物リスト =====
+function openShoppingList() {
+  const content = document.getElementById('shoppingListContent');
+  const list = buildShoppingList();
+  if(list.length === 0) {
+    content.innerHTML = `<div style="text-align:center;padding:28px 0;color:var(--text-muted)">
+      <div style="font-size:36px;margin-bottom:8px">🎉</div>
+      <div style="font-weight:600">買い物リストは空です</div>
+      <div style="font-size:12px;margin-top:4px">残り少ない商品や期限切れ商品がありません</div>
+    </div>`;
+  } else {
+    content.innerHTML = list.map((item, i) => `
+      <div class="shopping-item">
+        <input type="checkbox" class="shopping-check" id="sc${i}">
+        <div style="flex:1">
+          <div class="shopping-name">${esc(item.name)}</div>
+          <div class="shopping-reason">${getCatIcon(item.category)} ${esc(item.category)}　${item.reason}</div>
+        </div>
+      </div>`).join('');
+  }
+  document.getElementById('shoppingModalOverlay').classList.add('open');
+  closeSidebar();
+}
+
+function buildShoppingList() {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const list = [];
+  items.forEach(item => {
+    // 残り少ない
+    if(Number(item.qty) <= Number(item.minStock ?? 1)) {
+      list.push({...item, reason: `残り${item.qty}個（補充目安: ${item.minStock ?? 1}個）`});
+      return;
+    }
+    // 期限切れ・期限が近い
+    if(item.expiry) {
+      const days = Math.floor((new Date(item.expiry) - today) / 86400000);
+      if(days < 0) list.push({...item, reason: `🚨 期限切れ（${Math.abs(days)}日経過）`});
+      else if(days <= EXPIRY_WARN) list.push({...item, reason: `⚠️ 期限まで${days}日`});
+    }
+  });
+  return list;
+}
+
+function buildShoppingText() {
+  const list = buildShoppingList();
+  if(list.length === 0) return '買い物リストは空です';
+  const date = new Date().toLocaleDateString('ja-JP');
+  return `🛒 買い物リスト（${date}）\n\n` +
+    list.map(item => `□ ${item.name}（${item.reason}）`).join('\n');
+}
+
+function copyShoppingList() {
+  navigator.clipboard.writeText(buildShoppingText())
+    .then(() => showToast('📋 コピーしました'))
+    .catch(() => showToast('⚠️ コピーに失敗しました'));
+}
+
+function shareShoppingList() {
+  if(navigator.share) {
+    navigator.share({ title: '買い物リスト', text: buildShoppingText() })
+      .catch(() => {});
+  } else {
+    copyShoppingList();
+  }
+}
+
+function closeShoppingList() {
+  document.getElementById('shoppingModalOverlay').classList.remove('open');
+}
+document.getElementById('shoppingModalOverlay').addEventListener('click', e => {
+  if(e.target === e.currentTarget) closeShoppingList();
+});
+
+// ===== ④ テンプレート =====
+let templates = JSON.parse(localStorage.getItem('inventory_templates') || '[]');
+function saveTemplatesStore() { localStorage.setItem('inventory_templates', JSON.stringify(templates)); }
+
+function openTemplateModal(fromModal) {
+  renderTemplateList(fromModal);
+  document.getElementById('templateModalTitle').textContent = fromModal ? '⭐ テンプレートから追加' : '⭐ テンプレート';
+  document.getElementById('templateModalOverlay').classList.add('open');
+  if(!fromModal) closeSidebar();
+}
+
+function closeTemplateModal() {
+  document.getElementById('templateModalOverlay').classList.remove('open');
+}
+
+document.getElementById('templateModalOverlay').addEventListener('click', e => {
+  if(e.target === e.currentTarget) closeTemplateModal();
+});
+
+function renderTemplateList(fromModal) {
+  const content = document.getElementById('templateListContent');
+  if(templates.length === 0) {
+    content.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--text-muted)">
+      <div style="font-size:32px;margin-bottom:6px">⭐</div>
+      <div style="font-size:13px">テンプレートがありません<br>よく使う商品を保存してください</div>
+    </div>`;
+    return;
+  }
+  content.innerHTML = templates.map((t, i) => `
+    <div class="template-item" onclick="${fromModal ? `applyTemplate(${i})` : `applyTemplate(${i})`}">
+      <span class="template-icon">${getCatIcon(t.category)}</span>
+      <div style="flex:1">
+        <div class="template-name">${esc(t.name)}</div>
+        <div class="template-meta">${esc(t.category)}${t.subcategory ? ' › ' + esc(t.subcategory) : ''}　数量: ${t.qty}</div>
+      </div>
+      <button onclick="event.stopPropagation();deleteTemplate(${i})" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:15px;padding:4px">🗑️</button>
+    </div>`).join('');
+}
+
+function saveAsTemplate() {
+  const name = document.getElementById('itemName')?.value.trim();
+  const category = document.getElementById('itemCategory')?.value;
+  if(!name || !category) { showToast('⚠️ 先に商品名とカテゴリーを入力してください'); return; }
+  const t = {
+    name, category,
+    subcategory: document.getElementById('itemSubcategory')?.value || '',
+    qty: parseInt(document.getElementById('itemQty')?.value) || 1,
+    minStock: parseInt(document.getElementById('itemMinStock')?.value) || 1,
+    note: document.getElementById('itemNote')?.value.trim() || '',
+  };
+  if(templates.find(x => x.name === t.name && x.category === t.category)) {
+    showToast('ℹ️ 同じ商品が既にテンプレートにあります'); return;
+  }
+  templates.unshift(t);
+  saveTemplatesStore();
+  showToast(`⭐ 「${t.name}」をテンプレートに保存しました`);
+}
+
+function applyTemplate(i) {
+  const t = templates[i];
+  closeTemplateModal();
+  openModal();
+  setTimeout(() => {
+    document.getElementById('itemName').value = t.name;
+    document.getElementById('itemCategory').value = t.category;
+    document.getElementById('itemQty').value = t.qty;
+    document.getElementById('itemMinStock').value = t.minStock || 1;
+    document.getElementById('itemNote').value = t.note || '';
+    renderSubcategorySelect(t.subcategory || '');
+  }, 50);
+}
+
+function deleteTemplate(i) {
+  templates.splice(i, 1);
+  saveTemplatesStore();
+  renderTemplateList(false);
+  showToast('🗑️ テンプレートを削除しました');
+}
+
+// ===== ⑤ 一括操作 =====
+let bulkMode = false;
+let bulkSelected = new Set();
+
+function toggleBulkMode() {
+  bulkMode = !bulkMode;
+  bulkSelected.clear();
+  document.getElementById('bulkToolbar').classList.toggle('show', bulkMode);
+  document.getElementById('itemsGrid').classList.toggle('bulk-mode', bulkMode);
+  updateBulkCount();
+  render();
+  closeSidebar();
+}
+
+function toggleBulkSelect(id) {
+  if(!bulkMode) return;
+  if(bulkSelected.has(id)) bulkSelected.delete(id);
+  else bulkSelected.add(id);
+  // カードのスタイルを更新
+  const card = document.querySelector(`[data-id="${id}"]`);
+  if(card) card.classList.toggle('selected', bulkSelected.has(id));
+  updateBulkCount();
+}
+
+function updateBulkCount() {
+  document.getElementById('bulkCount').textContent = `${bulkSelected.size}件選択`;
+}
+
+async function bulkQtyChange() {
+  if(bulkSelected.size === 0) { showToast('⚠️ 商品を選択してください'); return; }
+  const val = prompt(`選択した${bulkSelected.size}件の数量を入力してください`, '1');
+  if(val === null) return;
+  const qty = parseInt(val);
+  if(isNaN(qty) || qty < 0) { showToast('⚠️ 正しい数量を入力してください'); return; }
+  for(const id of bulkSelected) {
+    const item = items.find(i => String(i.id) === String(id));
+    if(item) {
+      item.qty = qty;
+      await pushQty(id, qty);
+    }
+  }
+  localStorage.setItem('inventory_items', JSON.stringify(items));
+  bulkSelected.clear();
+  updateBulkCount();
+  render();
+  showToast(`✅ ${bulkSelected.size || '複数'}件の数量を${qty}に変更しました`);
+}
+
+async function bulkDelete() {
+  if(bulkSelected.size === 0) { showToast('⚠️ 商品を選択してください'); return; }
+  const ids = [...bulkSelected];
+  // 削除確認
+  document.getElementById('deleteModalName').textContent = `${ids.length}件の商品`;
+  deletingId = '__bulk__';
+  document.getElementById('deleteModalOverlay').classList.add('open');
+}
+
+// confirmDelete を拡張して一括削除に対応
+const _origConfirmDelete = window.confirmDelete;
 
 // ===== SIDEBAR =====
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('open');}
