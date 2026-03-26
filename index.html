@@ -1257,12 +1257,12 @@ async function syncNow() {
     }
 
     // ① 削除キューのリトライ（前回失敗した削除を再送）
+    // deletedIdsからの解放はgetAll後にサーバー側で確認してから行う
     if(deletedIds.size > 0) {
       for(const id of [...deletedIds]) {
         try {
           await api('delete', {id});
-          deletedIds.delete(id);
-          saveDeletedIds();
+          // ここではdeletedIdsから削除しない（getAll後に確認）
         } catch(e) { break; }
       }
     }
@@ -1362,10 +1362,9 @@ async function pushDelete(id) {
   if(offlineMode || !SCRIPT_URL) return;
   try {
     await api('delete', {id});
-    deletedIds.delete(String(id));
-    saveDeletedIds();
+    // deletedIdsからの解放は次のsyncNow時にgetAllで確認してから行う
   } catch(e) {
-    // 失敗しても deletedIds に残るので次の syncNow 時に再試行
+    // 失敗しても deletedIds に残るので次回syncNow時にリトライ
   }
 }
 
@@ -1645,14 +1644,21 @@ async function saveItem() {
     showToast('✅ 追加しました');
   }
   localStorage.setItem('inventory_items', JSON.stringify(items));
+
+  // 写真データをcloseModal前に確保
+  const photoSourceForUpload = originalPhotoData ||
+    (rawPhoto && rawPhoto.startsWith('data:') ? rawPhoto : null);
+  originalPhotoData = null;
+
   render(); closeModal();
+
   if(saved) {
     await pushItem(saved);
-    // 新しい写真があればDriveにアップロード（元画像から圧縮して高画質）
-    const photoSource = originalPhotoData || rawPhoto;
-    if(photoSource && SCRIPT_URL) {
+    // 新しい写真（base64）があればDriveにアップロード
+    if(photoSourceForUpload && SCRIPT_URL) {
+      showToast('📸 写真をアップロード中...');
       try {
-        const compressed = await compressPhoto(photoSource, true); // 400px・0.7
+        const compressed = await compressPhoto(photoSourceForUpload, true);
         const result = await api('uploadPhoto', {id: saved.id, photo: compressed});
         if(result && result.url) {
           const idx = items.findIndex(i=>String(i.id)===String(saved.id));
@@ -1660,15 +1666,20 @@ async function saveItem() {
           localStorage.setItem('inventory_items', JSON.stringify(items));
           render();
           showToast('📸 写真をDriveに保存しました');
+        } else {
+          throw new Error(result?.error || 'Drive保存失敗');
         }
       } catch(e) {
-        const fallback = await compressPhoto(photoSource, false);
-        const idx = items.findIndex(i=>String(i.id)===String(saved.id));
-        if(idx>=0) { items[idx].photo = fallback; items[idx].photoUrl = ''; }
-        localStorage.setItem('inventory_items', JSON.stringify(items));
-        render();
+        // Drive失敗時はlocalStorageに小さく保存（フォールバック）
+        try {
+          const fallback = await compressPhoto(photoSourceForUpload, false);
+          const idx = items.findIndex(i=>String(i.id)===String(saved.id));
+          if(idx>=0) { items[idx].photo = fallback; items[idx].photoUrl = ''; }
+          localStorage.setItem('inventory_items', JSON.stringify(items));
+          render();
+          showToast('⚠️ Drive保存失敗。このデバイスのみ表示されます');
+        } catch(e2) {}
       }
-      originalPhotoData = null;
     }
   }
 }
