@@ -1226,6 +1226,24 @@ function saveDeletedIds() { localStorage.setItem('inventory_deleted', JSON.strin
 
 async function api(action, data = {}) {
   if(offlineMode || !SCRIPT_URL) return;
+
+  // uploadPhotoはJSONで送信（base64の+が壊れるのを防ぐ）
+  if(action === 'uploadPhoto') {
+    const payload = Object.assign({action, password: APP_PW}, data);
+    const res = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      cache:  'no-store',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if(!res.ok) throw new Error('Network error ' + res.status);
+    const json = await res.json();
+    if(json.error === 'unauthorized') throw new Error('unauthorized');
+    if(json.error) throw new Error(json.error);
+    return json;
+  }
+
+  // 通常リクエストはURLエンコード
   const payload = Object.assign({action, password: APP_PW, _t: Date.now()}, data);
   const res = await fetch(SCRIPT_URL, {
     method: 'POST',
@@ -1233,7 +1251,7 @@ async function api(action, data = {}) {
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
     body: new URLSearchParams(payload).toString(),
   });
-  if(!res.ok) throw new Error('Network error');
+  if(!res.ok) throw new Error('Network error ' + res.status);
   const json = await res.json();
   if(json.error === 'unauthorized') throw new Error('unauthorized');
   return json;
@@ -1670,6 +1688,7 @@ async function saveItem() {
           throw new Error(result?.error || 'Drive保存失敗');
         }
       } catch(e) {
+        console.error('Drive upload error:', e);
         // Drive失敗時はlocalStorageに小さく保存（フォールバック）
         try {
           const fallback = await compressPhoto(photoSourceForUpload, false);
@@ -1677,7 +1696,7 @@ async function saveItem() {
           if(idx>=0) { items[idx].photo = fallback; items[idx].photoUrl = ''; }
           localStorage.setItem('inventory_items', JSON.stringify(items));
           render();
-          showToast('⚠️ Drive保存失敗。このデバイスのみ表示されます');
+          showToast('⚠️ Drive保存失敗: ' + (e.message || '不明なエラー'));
         } catch(e2) {}
       }
     }
