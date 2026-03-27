@@ -1636,57 +1636,68 @@ async function saveItem() {
   const category = document.getElementById('itemCategory').value;
   if(!name){showToast('⚠️ 商品名を入力してください');return;}
   if(!category){showToast('⚠️ カテゴリーを選択してください');return;}
+
   const prev = document.getElementById('photoPreview');
   const rawPhoto = prev.style.display!=='none' ? prev.src : '';
+
+  // 新しい写真かどうか判定（base64なら新規、httpならDrive URL既存）
+  const isNewPhoto = rawPhoto && rawPhoto.startsWith('data:');
+
+  // 写真データをcloseModal前に確保（closeModalでnullになるため）
+  const photoSourceForUpload = isNewPhoto ? (originalPhotoData || rawPhoto) : null;
+  originalPhotoData = null;
+
   // 既存アイテムのphotoUrlを保持
   const existingItem = editingId ? items.find(i=>String(i.id)===String(editingId)) : null;
   const existingPhotoUrl = existingItem ? existingItem.photoUrl || '' : '';
+
   const openedVal = parseInt(document.getElementById('itemOpened').value)||0;
   const subcat = document.getElementById('itemSubcategory').value || '';
   const minStock = parseInt(document.getElementById('itemMinStock').value) ?? 1;
   const data = {
-    name, category, subcategory:subcat,
-    expiry: document.getElementById('itemExpiry').value,
-    qty: parseInt(document.getElementById('itemQty').value)||1,
+    name, category, subcategory: subcat,
+    expiry:   document.getElementById('itemExpiry').value,
+    qty:      parseInt(document.getElementById('itemQty').value)||1,
     minStock, opened: openedVal,
     openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '',
-    note: document.getElementById('itemNote').value.trim(),
-    photo: '',
-    photoUrl: rawPhoto ? '' : existingPhotoUrl, // 新写真があればリセット、なければ既存URLを保持
-    date: new Date().toISOString().split('T')[0]
+    note:     document.getElementById('itemNote').value.trim(),
+    photo:    isNewPhoto ? '' : (existingItem ? existingItem.photo || '' : ''),
+    // 新写真なら既存URLをいったん空に、なければ既存URLを保持
+    photoUrl: isNewPhoto ? '' : existingPhotoUrl,
+    date:     new Date().toISOString().split('T')[0]
   };
+
   let saved;
   if(editingId) {
     const idx = items.findIndex(i=>String(i.id)===String(editingId));
-    if(idx>=0){items[idx]=Object.assign({},items[idx],data);saved=items[idx];}
+    if(idx>=0){ items[idx] = Object.assign({}, items[idx], data); saved = items[idx]; }
     showToast('✅ 更新しました');
   } else {
     saved = Object.assign({id: Date.now().toString()}, data);
     items.unshift(saved);
     showToast('✅ 追加しました');
   }
+
   localStorage.setItem('inventory_items', JSON.stringify(items));
 
-  // 写真データをcloseModal前に確保
-  const photoSourceForUpload = originalPhotoData ||
-    (rawPhoto && rawPhoto.startsWith('data:') ? rawPhoto : null);
-  originalPhotoData = null;
-
-  render(); closeModal();
+  // モーダルを先に閉じる（ユーザーが待たないよう）
+  closeModal();
+  await render();
 
   if(saved) {
     await pushItem(saved);
-    // 新しい写真（base64）があればDriveにアップロード
+
+    // 新しい写真があればDriveにアップロード
     if(photoSourceForUpload && SCRIPT_URL) {
-      // ① まず圧縮版をすぐに表示（ユーザーが待たないよう）
+      // ① まず圧縮版をすぐ表示
       const previewCompressed = await compressPhoto(photoSourceForUpload, 'fallback');
       const preIdx = items.findIndex(i=>String(i.id)===String(saved.id));
       if(preIdx>=0) { items[preIdx].photo = previewCompressed; items[preIdx].photoUrl = ''; }
       localStorage.setItem('inventory_items', JSON.stringify(items));
-      render();
+      await render();
       showToast('📸 写真をDriveに保存中...');
 
-      // ② バックグラウンドでDriveにアップロード
+      // ② バックグラウンドでDriveに高画質アップロード
       try {
         const compressed = await compressPhoto(photoSourceForUpload, true);
         const res = await fetch(SCRIPT_URL, {
@@ -1701,15 +1712,14 @@ async function saveItem() {
           const idx = items.findIndex(i=>String(i.id)===String(saved.id));
           if(idx>=0) { items[idx].photoUrl = result.url; items[idx].photo = ''; }
           localStorage.setItem('inventory_items', JSON.stringify(items));
-          render();
+          await render();
           showToast('📸 写真をDriveに保存しました');
         } else {
           throw new Error(result?.error || 'URLが返されませんでした');
         }
       } catch(e) {
         console.error('Drive upload error:', e);
-        // 失敗時はフォールバック画像のまま維持
-        showToast('⚠️ Drive保存失敗: ' + (e.message || '不明なエラー') + '（このデバイスのみ表示）');
+        showToast('⚠️ Drive保存失敗: ' + (e.message || '不明なエラー'));
       }
     }
   }
