@@ -1001,22 +1001,36 @@ function compressPhoto(dataUrl, mode) {
 
 // 既存アイテムの写真をDriveにアップロードして移行
 async function migratePhotos(items) {
+  if(!SCRIPT_URL) return items; // SCRIPT_URL未設定時は何もしない
+  const needsMigration = items.some(i => i.photo && i.photo.startsWith('data:'));
+  if(!needsMigration) return items; // 移行対象なし
   let migrated = 0;
   for(const item of items) {
-    if(item.photo && item.photo.startsWith('data:') && SCRIPT_URL) {
+    if(item.photo && item.photo.startsWith('data:')) {
       try {
-        const compressed = await compressPhoto(item.photo, true); // Drive用品質
-        const result = await api('uploadPhoto', {id: item.id, photo: compressed});
+        const compressed = await compressPhoto(item.photo, true);
+        const res = await fetch(SCRIPT_URL, {
+          method: 'POST', cache: 'no-store',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: item.id, photo: compressed}),
+        });
+        if(!res.ok) continue;
+        const result = await res.json();
         if(result && result.url) {
           item.photoUrl = result.url;
-          item.photo = '';
+          item.photo    = '';
+          // Drive URL をサーバーにも保存
+          try {
+            const itemToSync = Object.assign({}, item, {photo: result.url, photoUrl: ''});
+            await api('save', {item: JSON.stringify(itemToSync)});
+          } catch(e2) {}
           migrated++;
         }
       } catch(e) { /* 失敗はスキップ */ }
     }
   }
   if(migrated > 0) {
-    localStorage.setItem('inventory_items', JSON.stringify(items));
+    safeSetItems(items);
     showToast(`📸 写真${migrated}件をGoogle Driveに移行しました`);
   }
   return items;
@@ -1164,7 +1178,7 @@ async function saveScriptUrl() {
     document.getElementById('setupScreen').classList.remove('show');
     if(data.items) {
       items = data.items.map(i => ({...i, qty: Number(i.qty)||0}));
-      localStorage.setItem('inventory_items', JSON.stringify(items));
+      safeSetItems(items);
     }
     startApp();
     showToast('🔒 認証成功！スプレッドシートに接続しました');
@@ -1199,7 +1213,10 @@ function openSettings() {
   setSyncStatus('offline','オフライン');
 }
 
+let appStarted = false;
 async function startApp() {
+  if(appStarted) return; // 重複起動防止
+  appStarted = true;
   renderCategoryUI();
   render();
   if(!offlineMode && SCRIPT_URL) {
@@ -1208,9 +1225,9 @@ async function startApp() {
     document.addEventListener('visibilitychange', () => {
       if(document.visibilityState === 'visible') syncNow();
     });
-    window.addEventListener('focus', syncNow);
     window.addEventListener('pageshow', e => { if(e.persisted) syncNow(); });
-    // 写真移行はバックグラウンドで実行（UIをブロックしない）
+    // focusとvisibilitychangeは重複するためfocusは除外
+    // 写真移行はバックグラウンドで実行
     migratePhotos(items);
   } else {
     setSyncStatus('offline','オフライン');
@@ -1227,6 +1244,18 @@ function setSyncStatus(state, text) {
 // 未同期アイテムのキュー
 let pendingSync = JSON.parse(localStorage.getItem('inventory_pending') || '[]');
 function savePending() { localStorage.setItem('inventory_pending', JSON.stringify(pendingSync)); }
+
+// 安全な localStorage 保存（容量超過時は古い photo を削除してリトライ）
+function safeSetItems(itemsArray) {
+  try {
+    localStorage.setItem('inventory_items', JSON.stringify(itemsArray));
+  } catch(e) {
+    // 容量超過 → base64写真を全て除去してリトライ
+    console.warn('localStorage full, stripping photos');
+    const stripped = itemsArray.map(i => Object.assign({}, i, {photo: ''}));
+    try { localStorage.setItem('inventory_items', JSON.stringify(stripped)); } catch(e2) {}
+  }
+}
 
 // 写真アップロード再試行キュー
 let pendingPhotos = JSON.parse(localStorage.getItem('inventory_pending_photos') || '[]');
@@ -1246,8 +1275,16 @@ async function retryPendingPhotos() {
       const result = await res.json();
       if(result && result.url) {
         const idx = items.findIndex(i=>String(i.id)===String(p.id));
-        if(idx>=0) { items[idx].photoUrl = result.url; items[idx].photo = ''; }
-        localStorage.setItem('inventory_items', JSON.stringify(items));
+        if(idx>=0) {
+          items[idx].photoUrl = result.url;
+          items[idx].photo    = '';
+          // Drive URL をサーバーにも保存
+          try {
+            const itemToSync = Object.assign({}, items[idx], {photo: result.url, photoUrl: ''});
+            await api('save', {item: JSON.stringify(itemToSync)});
+          } catch(e2) {}
+        }
+        safeSetItems(items);
         pendingPhotos = pendingPhotos.filter(x => x.id !== p.id);
         savePendingPhotos();
         render();
@@ -1293,8 +1330,11 @@ async function api(action, data = {}) {
   return json;
 }
 
+let isSyncing = false;
 async function syncNow() {
   if(offlineMode || !SCRIPT_URL) return;
+  if(isSyncing) return; // 同時実行防止
+  isSyncing = true;
   setSyncStatus('syncing','同期中...');
   try {
     // ① 写真アップロード再試行
@@ -1320,7 +1360,11 @@ async function syncNow() {
       const queue = [...pendingSync];
       for(const pending of queue) {
         try {
-          await api('save', {item: JSON.stringify(pending)});
+          const forGas = Object.assign({}, pending);
+          if(forGas.photo && forGas.photo.startsWith('data:')) forGas.photo = '';
+          if(forGas.photoUrl && forGas.photoUrl.startsWith('http')) forGas.photo = forGas.photoUrl;
+          delete forGas.photoUrl;
+          await api('save', {item: JSON.stringify(forGas)});
           pendingSync = pendingSync.filter(p => p.id !== pending.id);
           savePending();
         } catch(e) { break; }
@@ -1381,7 +1425,7 @@ async function syncNow() {
       });
 
       items = merged;
-      localStorage.setItem('inventory_items', JSON.stringify(items));
+      safeSetItems(items);
       render();
       const t = new Date();
       setSyncStatus('synced', `${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')} 同期済み`);
@@ -1394,10 +1438,23 @@ async function syncNow() {
     } else {
       setSyncStatus('error','同期エラー');
     }
+  } finally {
+    isSyncing = false; // 必ずロック解除
   }
 }
 
 async function pushItem(item) {
+  // base64写真はGASに送らない（Drive URLのみ送る）
+  const itemForGas = Object.assign({}, item);
+  if(itemForGas.photo && itemForGas.photo.startsWith('data:')) {
+    itemForGas.photo = ''; // base64は除去
+  }
+  // photoUrl は photo列として送る
+  if(itemForGas.photoUrl && itemForGas.photoUrl.startsWith('http')) {
+    itemForGas.photo = itemForGas.photoUrl;
+  }
+  delete itemForGas.photoUrl;
+
   if(offlineMode || !SCRIPT_URL) {
     if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(item);
     else pendingSync = pendingSync.map(p => p.id === item.id ? item : p);
@@ -1406,7 +1463,7 @@ async function pushItem(item) {
   }
   setSyncStatus('syncing','同期中...');
   try {
-    await api('save', {item: JSON.stringify(item)});
+    await api('save', {item: JSON.stringify(itemForGas)});
     pendingSync = pendingSync.filter(p => p.id !== item.id);
     savePending();
     setSyncStatus('synced','同期済み');
@@ -1545,7 +1602,7 @@ async function chQty(id, d) {
   item.qty = Math.max(0, Number(item.qty)+d);
   // 開封数が総数を超えないよう調整
   if(Number(item.opened) > item.qty) item.opened = item.qty;
-  localStorage.setItem('inventory_items', JSON.stringify(items));
+  safeSetItems(items);
   render();
   await pushQty(id, item.qty);
 }
@@ -1581,7 +1638,7 @@ async function saveOpenedModal() {
   if(val > Number(item.qty)) { showToast(`⚠️ 総数（${item.qty}）を超えています`); return; }
   item.opened = val;
   item.openDate = val > 0 ? document.getElementById('openedModalDate').value : '';
-  localStorage.setItem('inventory_items', JSON.stringify(items));
+  safeSetItems(items);
   render();
   closeOpenedModal();
   await pushItem(item);
@@ -1620,7 +1677,7 @@ async function confirmDelete() {
     }
     saveDeletedIds(); savePending();
     items = items.filter(i => !ids.includes(String(i.id)));
-    localStorage.setItem('inventory_items', JSON.stringify(items));
+    safeSetItems(items);
     bulkSelected.clear();
     updateBulkCount();
     render();
@@ -1637,7 +1694,7 @@ async function confirmDelete() {
   pendingSync = pendingSync.filter(p => String(p.id) !== String(id));
   savePending();
   items = items.filter(i=>String(i.id)!==String(id));
-  localStorage.setItem('inventory_items', JSON.stringify(items));
+  safeSetItems(items);
   render();
   showToast('🗑️ 削除しました');
   await pushDelete(id);
@@ -1743,7 +1800,7 @@ async function saveItem() {
 
   // ===== ローカル保存・UI更新 =====
   try {
-    localStorage.setItem('inventory_items', JSON.stringify(items));
+    safeSetItems(items);
   } catch(e) {
     // localStorage が満杯の場合でも続行
     console.warn('localStorage save failed:', e);
@@ -1767,7 +1824,7 @@ async function saveItem() {
       const previewCompressed = await compressPhoto(photoSourceForUpload, 'fallback');
       const preIdx = items.findIndex(i=>String(i.id)===String(saved.id));
       if(preIdx >= 0) { items[preIdx].photo = previewCompressed; items[preIdx].photoUrl = ''; }
-      localStorage.setItem('inventory_items', JSON.stringify(items));
+      safeSetItems(items);
       render();
       showToast('📸 写真をDriveに保存中...');
     } catch(e) { console.warn('preview compress failed:', e); }
@@ -1785,8 +1842,16 @@ async function saveItem() {
       const result = await res.json();
       if(result && result.url) {
         const idx = items.findIndex(i=>String(i.id)===String(saved.id));
-        if(idx >= 0) { items[idx].photoUrl = result.url; items[idx].photo = ''; }
-        localStorage.setItem('inventory_items', JSON.stringify(items));
+        if(idx >= 0) {
+          items[idx].photoUrl = result.url;
+          items[idx].photo    = '';
+          // Drive URL をサーバーの photo 列にも保存（他デバイスで見えるよう）
+          try {
+            const itemToSync = Object.assign({}, items[idx], {photo: result.url, photoUrl: ''});
+            await api('save', {item: JSON.stringify(itemToSync)});
+          } catch(e2) { /* 失敗しても次の syncNow で補完される */ }
+        }
+        safeSetItems(items);
         render();
         showToast('📸 写真をDriveに保存しました');
       } else {
@@ -1795,10 +1860,13 @@ async function saveItem() {
     } catch(e) {
       console.error('Drive upload error:', e);
       // 再試行キューに保存（次の同期時に自動アップロード）
+      // ※ キューにはDrive送信用の高画質版を保存する
       try {
-        const queuePhoto = await compressPhoto(photoSourceForUpload, 'fallback');
+        const queuePhoto = await compressPhoto(photoSourceForUpload, true);
         if(!pendingPhotos.find(p => p.id === saved.id)) {
           pendingPhotos.push({id: saved.id, photo: queuePhoto});
+          // pendingPhotosはlocalStorageを圧迫しないよう上限3件
+          if(pendingPhotos.length > 3) pendingPhotos.shift();
           savePendingPhotos();
         }
         showToast('📸 写真は次回同期時に自動アップロードされます');
@@ -2259,7 +2327,7 @@ async function receiptRegisterSelected() {
 
   // ローカルに追加
   items.unshift(...toAdd);
-  localStorage.setItem('inventory_items', JSON.stringify(items));
+  safeSetItems(items);
   render();
 
   // スプレッドシートに同期
@@ -2729,11 +2797,12 @@ async function bulkQtyChange() {
       await pushQty(id, qty);
     }
   }
-  localStorage.setItem('inventory_items', JSON.stringify(items));
+  safeSetItems(items);
+  const changedCount = bulkSelected.size;
   bulkSelected.clear();
   updateBulkCount();
   render();
-  showToast(`✅ ${bulkSelected.size || '複数'}件の数量を${qty}に変更しました`);
+  showToast(`✅ ${changedCount}件の数量を${qty}に変更しました`);
 }
 
 async function bulkDelete() {
