@@ -1019,11 +1019,6 @@ async function migratePhotos(items) {
         if(result && result.url) {
           item.photoUrl = result.url;
           item.photo    = '';
-          // Drive URL をサーバーにも保存
-          try {
-            const itemToSync = Object.assign({}, item, {photo: result.url, photoUrl: ''});
-            await api('save', {item: JSON.stringify(itemToSync)});
-          } catch(e2) {}
           migrated++;
         }
       } catch(e) { /* 失敗はスキップ */ }
@@ -1278,11 +1273,7 @@ async function retryPendingPhotos() {
         if(idx>=0) {
           items[idx].photoUrl = result.url;
           items[idx].photo    = '';
-          // Drive URL をサーバーにも保存
-          try {
-            const itemToSync = Object.assign({}, items[idx], {photo: result.url, photoUrl: ''});
-            await api('save', {item: JSON.stringify(itemToSync)});
-          } catch(e2) {}
+          // uploadPhotoToDrive がGAS側でphoto列を更新済みなので追加save不要
         }
         safeSetItems(items);
         pendingPhotos = pendingPhotos.filter(x => x.id !== p.id);
@@ -1386,12 +1377,13 @@ async function syncNow() {
                         : (local ? Number(local.opened)||0 : 0),
             openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
             subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
-            photoUrl: (serverItem.photo && serverItem.photo.startsWith('http'))
-                        ? serverItem.photo   // サーバーにDrive URLがあればそれを使う
-                        : (local ? local.photoUrl || '' : ''),  // なければローカルを保持
-            photo:    (serverItem.photo && serverItem.photo.startsWith('data:'))
-                        ? serverItem.photo   // サーバーにbase64があればそれを使う
-                        : (local ? local.photo || '' : ''),     // なければローカルを保持
+            // photo列の値を解析してphotoUrl/photoに振り分け
+            photoUrl: (serverItem.photo && String(serverItem.photo).startsWith('http'))
+                        ? String(serverItem.photo)
+                        : (local ? local.photoUrl || '' : ''),
+            photo:    (serverItem.photo && String(serverItem.photo).startsWith('data:'))
+                        ? String(serverItem.photo)
+                        : (local ? local.photo || '' : ''),
           });
         });
 
@@ -1828,11 +1820,7 @@ async function saveItem() {
         if(idx >= 0) {
           items[idx].photoUrl = result.url;
           items[idx].photo    = '';
-          // Drive URL をサーバーの photo 列にも保存（他デバイスで見えるよう）
-          try {
-            const itemToSync = Object.assign({}, items[idx], {photo: result.url, photoUrl: ''});
-            await api('save', {item: JSON.stringify(itemToSync)});
-          } catch(e2) { /* 失敗しても次の syncNow で補完される */ }
+
         }
         safeSetItems(items);
         render();
