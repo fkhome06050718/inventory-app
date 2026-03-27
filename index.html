@@ -1299,30 +1299,13 @@ function saveDeletedIds() { localStorage.setItem('inventory_deleted', JSON.strin
 
 async function api(action, data = {}) {
   if(offlineMode || !SCRIPT_URL) return;
-
-  // uploadPhotoはJSONで送信（base64の+が壊れるのを防ぐ）
-  if(action === 'uploadPhoto') {
-    const payload = Object.assign({action, password: APP_PW}, data);
-    const res = await fetch(SCRIPT_URL, {
-      method: 'POST',
-      cache:  'no-store',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-    });
-    if(!res.ok) throw new Error('Network error ' + res.status);
-    const json = await res.json();
-    if(json.error === 'unauthorized') throw new Error('unauthorized');
-    if(json.error) throw new Error(json.error);
-    return json;
-  }
-
-  // 通常リクエストはURLエンコード
+  // 全リクエストをJSONで送信（Drive URLの&がURLエンコードで壊れるのを防ぐ）
   const payload = Object.assign({action, password: APP_PW, _t: Date.now()}, data);
   const res = await fetch(SCRIPT_URL, {
-    method: 'POST',
-    cache:  'no-store',
-    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: new URLSearchParams(payload).toString(),
+    method:  'POST',
+    cache:   'no-store',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify(payload),
   });
   if(!res.ok) throw new Error('Network error ' + res.status);
   const json = await res.json();
