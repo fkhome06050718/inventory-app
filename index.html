@@ -962,9 +962,22 @@ let EXPIRY_WARN   = parseInt(localStorage.getItem('expiry_warn')   || '7');  // 
 // ===== STATE =====
 let items = JSON.parse(localStorage.getItem('inventory_items') || '[]');
 // 起動時に photo フィールドの Drive URL を photoUrl に移行
+// lh3形式の古いURLは uc 形式に変換
+function normalizePhotoUrl(url) {
+  if(!url) return '';
+  if(url.startsWith('data:')) return url;
+  if(url.includes('lh3.googleusercontent.com')) {
+    return url.replace(/https:\/\/lh3\.googleusercontent\.com\/d\/([^=]+)=w400/, 'https://drive.google.com/uc?id=$1&export=view');
+  }
+  return url;
+}
+
 items = items.map(item => {
   if(item.photo && item.photo.startsWith('http')) {
-    return Object.assign({}, item, {photoUrl: item.photo, photo: ''});
+    return Object.assign({}, item, {photoUrl: normalizePhotoUrl(item.photo), photo: ''});
+  }
+  if(item.photoUrl) {
+    return Object.assign({}, item, {photoUrl: normalizePhotoUrl(item.photoUrl)});
   }
   return item;
 });
@@ -1378,10 +1391,17 @@ async function syncNow() {
             openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
             subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
             // photo列の値を解析してphotoUrl/photoに振り分け
-            photoUrl: (serverItem.photo && String(serverItem.photo).startsWith('http'))
-                        ? String(serverItem.photo)
-                        : (local ? local.photoUrl || '' : ''),
-            photo:    (serverItem.photo && String(serverItem.photo).startsWith('data:'))
+            // lh3形式の古いURLは uc 形式に変換
+            photoUrl: (() => {
+              const p = String(serverItem.photo || '');
+              if(p.startsWith('http')) {
+                return p.includes('lh3.googleusercontent.com')
+                  ? p.replace(/https:\/\/lh3\.googleusercontent\.com\/d\/([^=]+)=w400/, 'https://drive.google.com/uc?id=$1&export=view')
+                  : p;
+              }
+              return local ? local.photoUrl || '' : '';
+            })(),
+            photo: (serverItem.photo && String(serverItem.photo).startsWith('data:'))
                         ? String(serverItem.photo)
                         : (local ? local.photo || '' : ''),
           });
