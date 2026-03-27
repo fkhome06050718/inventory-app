@@ -1228,6 +1228,34 @@ function setSyncStatus(state, text) {
 let pendingSync = JSON.parse(localStorage.getItem('inventory_pending') || '[]');
 function savePending() { localStorage.setItem('inventory_pending', JSON.stringify(pendingSync)); }
 
+// 写真アップロード再試行キュー
+let pendingPhotos = JSON.parse(localStorage.getItem('inventory_pending_photos') || '[]');
+function savePendingPhotos() { localStorage.setItem('inventory_pending_photos', JSON.stringify(pendingPhotos)); }
+
+async function retryPendingPhotos() {
+  if(!SCRIPT_URL || pendingPhotos.length === 0) return;
+  const queue = [...pendingPhotos];
+  for(const p of queue) {
+    try {
+      const res = await fetch(SCRIPT_URL, {
+        method: 'POST', cache: 'no-store',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: p.id, photo: p.photo}),
+      });
+      if(!res.ok) break;
+      const result = await res.json();
+      if(result && result.url) {
+        const idx = items.findIndex(i=>String(i.id)===String(p.id));
+        if(idx>=0) { items[idx].photoUrl = result.url; items[idx].photo = ''; }
+        localStorage.setItem('inventory_items', JSON.stringify(items));
+        pendingPhotos = pendingPhotos.filter(x => x.id !== p.id);
+        savePendingPhotos();
+        render();
+      }
+    } catch(e) { break; }
+  }
+}
+
 // 削除済みIDを記録（同期時に復活しないよう保護）
 let deletedIds = new Set(JSON.parse(localStorage.getItem('inventory_deleted') || '[]'));
 function saveDeletedIds() { localStorage.setItem('inventory_deleted', JSON.stringify([...deletedIds])); }
@@ -1269,7 +1297,10 @@ async function syncNow() {
   if(offlineMode || !SCRIPT_URL) return;
   setSyncStatus('syncing','同期中...');
   try {
-    // ① 削除キューを最初に処理（getAll前に必ず完了させる）
+    // ① 写真アップロード再試行
+    await retryPendingPhotos();
+
+    // ② 削除キューを最初に処理（getAll前に必ず完了させる）
     if(deletedIds.size > 0) {
       const idsToDelete = [...deletedIds]; // コピーしてから処理（Set変更の不具合防止）
       for(const id of idsToDelete) {
@@ -1763,7 +1794,17 @@ async function saveItem() {
       }
     } catch(e) {
       console.error('Drive upload error:', e);
-      showToast('⚠️ Drive保存失敗: ' + (e.message || '不明') + '（このデバイスのみ表示）');
+      // 再試行キューに保存（次の同期時に自動アップロード）
+      try {
+        const queuePhoto = await compressPhoto(photoSourceForUpload, 'fallback');
+        if(!pendingPhotos.find(p => p.id === saved.id)) {
+          pendingPhotos.push({id: saved.id, photo: queuePhoto});
+          savePendingPhotos();
+        }
+        showToast('📸 写真は次回同期時に自動アップロードされます');
+      } catch(e2) {
+        showToast('⚠️ Drive保存失敗: ' + (e.message || '不明'));
+      }
     }
   }
 }
