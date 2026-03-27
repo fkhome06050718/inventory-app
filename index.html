@@ -961,6 +961,13 @@ let EXPIRY_WARN   = parseInt(localStorage.getItem('expiry_warn')   || '7');  // 
 
 // ===== STATE =====
 let items = JSON.parse(localStorage.getItem('inventory_items') || '[]');
+// 起動時に photo フィールドの Drive URL を photoUrl に移行
+items = items.map(item => {
+  if(item.photo && item.photo.startsWith('http')) {
+    return Object.assign({}, item, {photoUrl: item.photo, photo: ''});
+  }
+  return item;
+});
 let currentFilter = 'all';
 let currentSort = 'name';
 let editingId = null;
@@ -1322,11 +1329,11 @@ async function syncNow() {
             openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
             subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
             photoUrl: (serverItem.photo && serverItem.photo.startsWith('http'))
-                        ? serverItem.photo
-                        : (local ? local.photoUrl || '' : ''),
-            photo: (serverItem.photo && serverItem.photo.startsWith('data:'))
-                        ? serverItem.photo
-                        : (local ? local.photo || '' : ''),
+                        ? serverItem.photo   // サーバーにDrive URLがあればそれを使う
+                        : (local ? local.photoUrl || '' : ''),  // なければローカルを保持
+            photo:    (serverItem.photo && serverItem.photo.startsWith('data:'))
+                        ? serverItem.photo   // サーバーにbase64があればそれを使う
+                        : (local ? local.photo || '' : ''),     // なければローカルを保持
           });
         });
 
@@ -1436,7 +1443,7 @@ function getFiltered() {
   return list;
 }
 
-async function render() {
+function render() {
   const list = getFiltered();
   document.getElementById('statTotal').textContent = items.length;
   document.getElementById('statCategories').textContent = new Set(items.map(i=>i.category)).size;
@@ -1632,95 +1639,131 @@ function editItem(id) {
 }
 
 async function saveItem() {
-  const name = document.getElementById('itemName').value.trim();
-  const category = document.getElementById('itemCategory').value;
-  if(!name){showToast('⚠️ 商品名を入力してください');return;}
-  if(!category){showToast('⚠️ カテゴリーを選択してください');return;}
+  // ===== バリデーション =====
+  const nameEl     = document.getElementById('itemName');
+  const categoryEl = document.getElementById('itemCategory');
+  const name       = nameEl ? nameEl.value.trim() : '';
+  const category   = categoryEl ? categoryEl.value : '';
 
-  const prev = document.getElementById('photoPreview');
-  const rawPhoto = prev.style.display!=='none' ? prev.src : '';
+  if(!name)     { showToast('⚠️ 商品名を入力してください'); return; }
+  if(!category) { showToast('⚠️ カテゴリーを選択してください'); return; }
 
-  // 新しい写真かどうか判定（base64なら新規、httpならDrive URL既存）
-  const isNewPhoto = rawPhoto && rawPhoto.startsWith('data:');
+  // ===== 写真データ確保（closeModal前に取得） =====
+  let rawPhoto = '';
+  try {
+    const prev = document.getElementById('photoPreview');
+    rawPhoto = (prev && prev.style.display !== 'none') ? prev.src : '';
+  } catch(e) {}
 
-  // 写真データをcloseModal前に確保（closeModalでnullになるため）
+  const isNewPhoto         = rawPhoto && rawPhoto.startsWith('data:');
   const photoSourceForUpload = isNewPhoto ? (originalPhotoData || rawPhoto) : null;
-  originalPhotoData = null;
+  originalPhotoData        = null; // 必ずリセット
 
-  // 既存アイテムのphotoUrlを保持
-  const existingItem = editingId ? items.find(i=>String(i.id)===String(editingId)) : null;
-  const existingPhotoUrl = existingItem ? existingItem.photoUrl || '' : '';
+  const existingItem    = editingId ? items.find(i=>String(i.id)===String(editingId)) : null;
+  const existingPhotoUrl = existingItem ? (existingItem.photoUrl || '') : '';
+  const existingPhoto    = existingItem ? (existingItem.photo    || '') : '';
 
-  const openedVal = parseInt(document.getElementById('itemOpened').value)||0;
-  const subcat = document.getElementById('itemSubcategory').value || '';
-  const minStock = parseInt(document.getElementById('itemMinStock').value) ?? 1;
+  // ===== データ収集 =====
+  let openedVal = 0, subcat = '', minStock = 1, expiry = '', qty = 1, note = '';
+  try { openedVal = parseInt(document.getElementById('itemOpened').value)  || 0; } catch(e) {}
+  try { subcat    = document.getElementById('itemSubcategory').value        || ''; } catch(e) {}
+  try { minStock  = parseInt(document.getElementById('itemMinStock').value) || 1; } catch(e) {}
+  try { expiry    = document.getElementById('itemExpiry').value             || ''; } catch(e) {}
+  try { qty       = parseInt(document.getElementById('itemQty').value)      || 1; } catch(e) {}
+  try { note      = document.getElementById('itemNote').value.trim()        || ''; } catch(e) {}
+  let openDate = '';
+  try { openDate  = openedVal > 0 ? (document.getElementById('itemOpenDate').value || '') : ''; } catch(e) {}
+
   const data = {
-    name, category, subcategory: subcat,
-    expiry:   document.getElementById('itemExpiry').value,
-    qty:      parseInt(document.getElementById('itemQty').value)||1,
-    minStock, opened: openedVal,
-    openDate: openedVal > 0 ? document.getElementById('itemOpenDate').value : '',
-    note:     document.getElementById('itemNote').value.trim(),
-    photo:    isNewPhoto ? '' : (existingItem ? existingItem.photo || '' : ''),
-    // 新写真なら既存URLをいったん空に、なければ既存URLを保持
+    name, category,
+    subcategory: subcat,
+    expiry, qty, minStock,
+    opened: openedVal, openDate,
+    note,
+    photo:    isNewPhoto ? '' : existingPhoto,
     photoUrl: isNewPhoto ? '' : existingPhotoUrl,
-    date:     new Date().toISOString().split('T')[0]
+    date:     new Date().toISOString().split('T')[0],
   };
 
+  // ===== 保存処理 =====
   let saved;
-  if(editingId) {
-    const idx = items.findIndex(i=>String(i.id)===String(editingId));
-    if(idx>=0){ items[idx] = Object.assign({}, items[idx], data); saved = items[idx]; }
-    showToast('✅ 更新しました');
-  } else {
-    saved = Object.assign({id: Date.now().toString()}, data);
-    items.unshift(saved);
-    showToast('✅ 追加しました');
+  try {
+    if(editingId) {
+      const idx = items.findIndex(i=>String(i.id)===String(editingId));
+      if(idx >= 0) {
+        items[idx] = Object.assign({}, items[idx], data);
+        saved = items[idx];
+      } else {
+        // 編集対象が見つからない場合は新規追加として扱う
+        saved = Object.assign({id: Date.now().toString()}, data);
+        items.unshift(saved);
+      }
+      showToast('✅ 更新しました');
+    } else {
+      saved = Object.assign({id: Date.now().toString()}, data);
+      items.unshift(saved);
+      showToast('✅ 追加しました');
+    }
+  } catch(e) {
+    showToast('⚠️ 保存処理でエラーが発生しました');
+    console.error('saveItem error:', e);
+    return;
   }
 
-  localStorage.setItem('inventory_items', JSON.stringify(items));
+  // ===== ローカル保存・UI更新 =====
+  try {
+    localStorage.setItem('inventory_items', JSON.stringify(items));
+  } catch(e) {
+    // localStorage が満杯の場合でも続行
+    console.warn('localStorage save failed:', e);
+  }
 
-  // モーダルを先に閉じる（ユーザーが待たないよう）
+  // photoInputをリセット（次回選択できるよう）
+  try { document.getElementById('photoInput').value = ''; } catch(e) {}
+
   closeModal();
-  await render();
+  render();
 
-  if(saved) {
-    await pushItem(saved);
+  if(!saved) return;
 
-    // 新しい写真があればDriveにアップロード
-    if(photoSourceForUpload && SCRIPT_URL) {
-      // ① まず圧縮版をすぐ表示
+  // ===== サーバー同期 =====
+  try { await pushItem(saved); } catch(e) { console.warn('pushItem failed:', e); }
+
+  // ===== 写真のDriveアップロード =====
+  if(photoSourceForUpload && SCRIPT_URL) {
+    // ① まず圧縮版を即時表示
+    try {
       const previewCompressed = await compressPhoto(photoSourceForUpload, 'fallback');
       const preIdx = items.findIndex(i=>String(i.id)===String(saved.id));
-      if(preIdx>=0) { items[preIdx].photo = previewCompressed; items[preIdx].photoUrl = ''; }
+      if(preIdx >= 0) { items[preIdx].photo = previewCompressed; items[preIdx].photoUrl = ''; }
       localStorage.setItem('inventory_items', JSON.stringify(items));
-      await render();
+      render();
       showToast('📸 写真をDriveに保存中...');
+    } catch(e) { console.warn('preview compress failed:', e); }
 
-      // ② バックグラウンドでDriveに高画質アップロード
-      try {
-        const compressed = await compressPhoto(photoSourceForUpload, true);
-        const res = await fetch(SCRIPT_URL, {
-          method: 'POST',
-          cache: 'no-store',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: saved.id, photo: compressed}),
-        });
-        if(!res.ok) throw new Error('HTTP ' + res.status);
-        const result = await res.json();
-        if(result && result.url) {
-          const idx = items.findIndex(i=>String(i.id)===String(saved.id));
-          if(idx>=0) { items[idx].photoUrl = result.url; items[idx].photo = ''; }
-          localStorage.setItem('inventory_items', JSON.stringify(items));
-          await render();
-          showToast('📸 写真をDriveに保存しました');
-        } else {
-          throw new Error(result?.error || 'URLが返されませんでした');
-        }
-      } catch(e) {
-        console.error('Drive upload error:', e);
-        showToast('⚠️ Drive保存失敗: ' + (e.message || '不明なエラー'));
+    // ② Drive高画質アップロード（失敗しても登録には影響しない）
+    try {
+      const compressed = await compressPhoto(photoSourceForUpload, true);
+      const res = await fetch(SCRIPT_URL, {
+        method:  'POST',
+        cache:   'no-store',
+        headers: {'Content-Type': 'application/json'},
+        body:    JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: saved.id, photo: compressed}),
+      });
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const result = await res.json();
+      if(result && result.url) {
+        const idx = items.findIndex(i=>String(i.id)===String(saved.id));
+        if(idx >= 0) { items[idx].photoUrl = result.url; items[idx].photo = ''; }
+        localStorage.setItem('inventory_items', JSON.stringify(items));
+        render();
+        showToast('📸 写真をDriveに保存しました');
+      } else {
+        throw new Error(result?.error || 'URLが返されませんでした');
       }
+    } catch(e) {
+      console.error('Drive upload error:', e);
+      showToast('⚠️ Drive保存失敗: ' + (e.message || '不明') + '（このデバイスのみ表示）');
     }
   }
 }
