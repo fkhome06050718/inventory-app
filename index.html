@@ -1040,7 +1040,7 @@ async function migratePhotos(items) {
         const compressed = await compressPhoto(item.photo, true);
         const res = await fetch(SCRIPT_URL, {
           method: 'POST', cache: 'no-store',
-          headers: {'Content-Type': 'application/json'},
+          headers: {'Content-Type': 'text/plain'},
           body: JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: item.id, photo: compressed}),
         });
         if(!res.ok) continue;
@@ -1306,7 +1306,7 @@ async function retryPendingPhotos() {
     try {
       const res = await fetch(SCRIPT_URL, {
         method: 'POST', cache: 'no-store',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'text/plain'},
         body: JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: p.id, photo: p.photo}),
       });
       if(!res.ok) break;
@@ -1342,7 +1342,7 @@ async function api(action, data = {}) {
   const res = await fetch(SCRIPT_URL, {
     method:  'POST',
     cache:   'no-store',
-    headers: {'Content-Type': 'application/json'},
+    headers: {'Content-Type': 'text/plain'},
     body:    JSON.stringify(payload),
   });
   if(!res.ok) throw new Error('Network error ' + res.status);
@@ -1870,7 +1870,7 @@ async function saveItem() {
       const res = await fetch(SCRIPT_URL, {
         method:  'POST',
         cache:   'no-store',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'text/plain'},
         body:    JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: saved.id, photo: compressed}),
       });
       if(!res.ok) throw new Error('HTTP ' + res.status);
@@ -2275,7 +2275,7 @@ async function analyzeReceipt() {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/plain',
         'x-api-key': ANTHROPIC_KEY,
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true'
