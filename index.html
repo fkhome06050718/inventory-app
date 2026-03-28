@@ -1005,15 +1005,15 @@ let deferredPrompt = null;
 
 // ===== PHOTO COMPRESSION =====
 // true: Drive保存用 1200px・品質0.92（高画質）
-// 'fallback': Drive失敗時 600px・品質0.7
-// false: スプレッドシート直接保存用 100px・品質0.2
+// 'fallback': Drive失敗時のローカル保存用 100px・品質0.5（約5-10KB）
+// false: 極小 100px・品質0.2
 function compressPhoto(dataUrl, mode) {
   return new Promise(res => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX     = mode === true ? 1200 : mode === 'fallback' ? 600 : 100;
-      const quality = mode === true ? 0.92  : mode === 'fallback' ? 0.7 : 0.2;
+      const MAX     = mode === true ? 1200 : mode === 'fallback' ? 100 : 100;
+      const quality = mode === true ? 0.92  : mode === 'fallback' ? 0.5 : 0.2;
       let w = img.width, h = img.height;
       if(w > MAX || h > MAX) {
         if(w > h) { h = Math.round(h * MAX / w); w = MAX; }
@@ -1270,11 +1270,15 @@ let pendingSync = JSON.parse(localStorage.getItem('inventory_pending') || '[]');
 function savePending() { localStorage.setItem('inventory_pending', JSON.stringify(pendingSync)); }
 
 // 安全な localStorage 保存
-// base64写真は常に除去してから保存（容量問題の根本対策）
+// 大きなbase64写真は除去、小さなサムネイル(約10KB以下)はそのまま保持
 function safeSetItems(itemsArray) {
-  // base64を除去したクリーンなデータのみ保存
   const clean = itemsArray.map(i => {
-    if(i.photo && i.photo.startsWith('data:')) {
+    // Drive URLがあればphotoは不要
+    if(i.photoUrl && i.photoUrl.startsWith('http')) {
+      return Object.assign({}, i, {photo: ''});
+    }
+    // base64でも小さなサムネイル(15KB = 約20000文字以下)は保持
+    if(i.photo && i.photo.startsWith('data:') && i.photo.length > 20000) {
       return Object.assign({}, i, {photo: ''});
     }
     return i;
@@ -1282,11 +1286,11 @@ function safeSetItems(itemsArray) {
   try {
     localStorage.setItem('inventory_items', JSON.stringify(clean));
   } catch(e) {
-    // それでも失敗する場合はphotoUrl以外も除去してリトライ
-    console.warn('localStorage full even after stripping base64:', e);
-    const minimal = clean.map(i => Object.assign({}, i, {photo: ''}));
-    try { localStorage.setItem('inventory_items', JSON.stringify(minimal)); } catch(e2) {
-      console.error('localStorage save failed completely:', e2);
+    // 容量超過時はphotoを全て除去してリトライ
+    console.warn('localStorage full, stripping all photos:', e);
+    const stripped = clean.map(i => Object.assign({}, i, {photo: ''}));
+    try { localStorage.setItem('inventory_items', JSON.stringify(stripped)); } catch(e2) {
+      console.error('localStorage save failed:', e2);
     }
   }
 }
@@ -1876,12 +1880,23 @@ async function saveItem() {
         if(idx >= 0) {
           items[idx].photoUrl = result.url;
           items[idx].photo    = '';
-          photoPreviewMap.delete(String(saved.id)); // メモリプレビュー削除
+          photoPreviewMap.delete(String(saved.id));
           safeSetItems(items);
           render();
           showToast('📸 写真をDriveに保存しました');
-          // Drive URLをサーバーに送る（他デバイスで同期できるよう）
-          try { await pushItem(items[idx]); } catch(e2) {}
+          // Drive URLをサーバーに送る
+          // uploadPhotoToDriveがすでにphoto列を更新済みだが、
+          // pendingSyncにも積んで次のsyncNowで確実に反映させる
+          try {
+            await pushItem(items[idx]);
+          } catch(e2) {
+            // 失敗時はpendingSyncに積む（次のsyncNowで再送）
+            const queueItem = Object.assign({}, items[idx]);
+            if(!pendingSync.find(p => p.id === queueItem.id)) {
+              pendingSync.push(queueItem);
+              savePending();
+            }
+          }
         } else {
           safeSetItems(items);
           render();
@@ -1892,18 +1907,28 @@ async function saveItem() {
       }
     } catch(e) {
       console.error('Drive upload error:', e);
-      // プレビューはメモリMapに残す（アプリ閉じるまで表示継続）
-      // 再試行キューに保存
+      const errMsg = e.message || '不明';
+      // Drive失敗時: 小さなサムネイルをlocalStorageに保存（再起動後も表示できるよう）
       try {
+        const thumbnail = await compressPhoto(photoSourceForUpload, 'fallback');
+        const idx = items.findIndex(i=>String(i.id)===String(saved.id));
+        if(idx >= 0) {
+          items[idx].photo    = thumbnail;
+          items[idx].photoUrl = '';
+          safeSetItems(items);
+          render();
+        }
+        // 高画質版を再試行キューに保存
         const queuePhoto = await compressPhoto(photoSourceForUpload, true);
         if(!pendingPhotos.find(p => p.id === saved.id)) {
           pendingPhotos.push({id: saved.id, photo: queuePhoto});
           if(pendingPhotos.length > 10) pendingPhotos.shift();
           savePendingPhotos();
         }
-        showToast('📸 写真は次回同期時に自動アップロードされます');
+        // エラー詳細を表示（原因特定のため）
+        showToast('⚠️ Drive失敗(' + errMsg + ')。サムネイル保存済み');
       } catch(e2) {
-        showToast('⚠️ Drive保存失敗: ' + (e.message || '不明'));
+        showToast('⚠️ 写真保存失敗: ' + errMsg);
       }
     }
   }
