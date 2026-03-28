@@ -1286,11 +1286,16 @@ async function retryPendingPhotos() {
         if(idx>=0) {
           items[idx].photoUrl = result.url;
           items[idx].photo    = '';
+          safeSetItems(items);
+          pendingPhotos = pendingPhotos.filter(x => x.id !== p.id);
+          savePendingPhotos();
+          render();
+          // Drive URLをサーバーに送る
+          try { await pushItem(items[idx]); } catch(e2) {}
+        } else {
+          pendingPhotos = pendingPhotos.filter(x => x.id !== p.id);
+          savePendingPhotos();
         }
-        safeSetItems(items);
-        pendingPhotos = pendingPhotos.filter(x => x.id !== p.id);
-        savePendingPhotos();
-        render();
       }
     } catch(e) { break; }
   }
@@ -1301,7 +1306,7 @@ let deletedIds = new Set(JSON.parse(localStorage.getItem('inventory_deleted') ||
 function saveDeletedIds() { localStorage.setItem('inventory_deleted', JSON.stringify([...deletedIds])); }
 
 async function api(action, data = {}) {
-  if(offlineMode || !SCRIPT_URL) return;
+  if(offlineMode || !SCRIPT_URL) throw new Error('offline');
   // 全リクエストをJSONで送信（Drive URLの&がURLエンコードで壊れるのを防ぐ）
   const payload = Object.assign({action, password: APP_PW, _t: Date.now()}, data);
   const res = await fetch(SCRIPT_URL, {
@@ -1412,7 +1417,10 @@ async function syncNow() {
         if(!serverIds.has(lid) && !deletedIds.has(lid)) {
           merged.unshift(localItem);
           if(!pendingSync.find(p => p.id === localItem.id)) {
-            pendingSync.push(localItem);
+            // base64写真はpendingSyncに保存しない（localStorage節約）
+            const queueItem = Object.assign({}, localItem);
+            if(queueItem.photo && queueItem.photo.startsWith('data:')) queueItem.photo = '';
+            pendingSync.push(queueItem);
             savePending();
           }
         }
@@ -1438,32 +1446,38 @@ async function syncNow() {
 }
 
 async function pushItem(item) {
-  // base64写真はGASに送らない（Drive URLのみ送る）
+  // GASに送るデータを準備（base64除去・photoUrl→photo変換）
   const itemForGas = Object.assign({}, item);
   if(itemForGas.photo && itemForGas.photo.startsWith('data:')) {
     itemForGas.photo = ''; // base64は除去
   }
-  // photoUrl は photo列として送る
   if(itemForGas.photoUrl && itemForGas.photoUrl.startsWith('http')) {
-    itemForGas.photo = itemForGas.photoUrl;
+    itemForGas.photo = itemForGas.photoUrl; // Drive URLをphoto列として送る
   }
   delete itemForGas.photoUrl;
 
+  // pendingSync用（localStorage保存）はbase64を除いたものを格納
+  const itemForQueue = Object.assign({}, item);
+  if(itemForQueue.photo && itemForQueue.photo.startsWith('data:')) {
+    itemForQueue.photo = ''; // base64はpendingSyncに保存しない
+  }
+
   if(offlineMode || !SCRIPT_URL) {
-    if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(item);
-    else pendingSync = pendingSync.map(p => p.id === item.id ? item : p);
+    if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(itemForQueue);
+    else pendingSync = pendingSync.map(p => p.id === item.id ? itemForQueue : p);
     savePending();
     return;
   }
   setSyncStatus('syncing','同期中...');
   try {
-    await api('save', {item: JSON.stringify(itemForGas)});
+    const result = await api('save', {item: JSON.stringify(itemForGas)});
+    if(!result) throw new Error('no response'); // api()がundefinedを返した場合
     pendingSync = pendingSync.filter(p => p.id !== item.id);
     savePending();
     setSyncStatus('synced','同期済み');
   } catch(e) {
-    if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(item);
-    else pendingSync = pendingSync.map(p => p.id === item.id ? item : p);
+    if(!pendingSync.find(p => p.id === item.id)) pendingSync.push(itemForQueue);
+    else pendingSync = pendingSync.map(p => p.id === item.id ? itemForQueue : p);
     savePending();
     setSyncStatus('error','同期エラー（次回自動リトライ）');
   }
@@ -1839,23 +1853,28 @@ async function saveItem() {
         if(idx >= 0) {
           items[idx].photoUrl = result.url;
           items[idx].photo    = '';
+          safeSetItems(items);
+          render();
+          showToast('📸 写真をDriveに保存しました');
+          // Drive URLをサーバーに送る（他デバイスで同期できるよう）
+          // pushItemはphotoUrl→photoに変換してからGASに送る
+          try { await pushItem(items[idx]); } catch(e2) {}
+        } else {
+          safeSetItems(items);
+          render();
+          showToast('📸 写真をDriveに保存しました');
         }
-        safeSetItems(items);
-        render();
-        showToast('📸 写真をDriveに保存しました');
       } else {
         throw new Error(result?.error || 'URLが返されませんでした');
       }
     } catch(e) {
       console.error('Drive upload error:', e);
       // 再試行キューに保存（次の同期時に自動アップロード）
-      // ※ キューにはDrive送信用の高画質版を保存する
       try {
         const queuePhoto = await compressPhoto(photoSourceForUpload, true);
         if(!pendingPhotos.find(p => p.id === saved.id)) {
           pendingPhotos.push({id: saved.id, photo: queuePhoto});
-          // pendingPhotosはlocalStorageを圧迫しないよう上限3件
-          if(pendingPhotos.length > 3) pendingPhotos.shift();
+          if(pendingPhotos.length > 10) pendingPhotos.shift(); // 上限10件に変更
           savePendingPhotos();
         }
         showToast('📸 写真は次回同期時に自動アップロードされます');
