@@ -979,8 +979,17 @@ items = items.map(item => {
   if(item.photoUrl) {
     return Object.assign({}, item, {photoUrl: normalizePhotoUrl(item.photoUrl)});
   }
+  // 起動時にbase64 photoをitems配列から除去（localStorage節約）
+  if(item.photo && item.photo.startsWith('data:')) {
+    return Object.assign({}, item, {photo: ''});
+  }
   return item;
 });
+
+// ===== IN-MEMORY PHOTO PREVIEW MAP =====
+// base64プレビューはlocalStorageに保存しない（容量問題防止）
+// Drive URLが来るまでの一時表示にのみ使用
+const photoPreviewMap = new Map(); // id → base64DataUrl
 let currentFilter = 'all';
 let currentSort = 'name';
 let editingId = null;
@@ -1253,15 +1262,25 @@ function setSyncStatus(state, text) {
 let pendingSync = JSON.parse(localStorage.getItem('inventory_pending') || '[]');
 function savePending() { localStorage.setItem('inventory_pending', JSON.stringify(pendingSync)); }
 
-// 安全な localStorage 保存（容量超過時は古い photo を削除してリトライ）
+// 安全な localStorage 保存
+// base64写真は常に除去してから保存（容量問題の根本対策）
 function safeSetItems(itemsArray) {
+  // base64を除去したクリーンなデータのみ保存
+  const clean = itemsArray.map(i => {
+    if(i.photo && i.photo.startsWith('data:')) {
+      return Object.assign({}, i, {photo: ''});
+    }
+    return i;
+  });
   try {
-    localStorage.setItem('inventory_items', JSON.stringify(itemsArray));
+    localStorage.setItem('inventory_items', JSON.stringify(clean));
   } catch(e) {
-    // 容量超過 → base64写真を全て除去してリトライ
-    console.warn('localStorage full, stripping photos');
-    const stripped = itemsArray.map(i => Object.assign({}, i, {photo: ''}));
-    try { localStorage.setItem('inventory_items', JSON.stringify(stripped)); } catch(e2) {}
+    // それでも失敗する場合はphotoUrl以外も除去してリトライ
+    console.warn('localStorage full even after stripping base64:', e);
+    const minimal = clean.map(i => Object.assign({}, i, {photo: ''}));
+    try { localStorage.setItem('inventory_items', JSON.stringify(minimal)); } catch(e2) {
+      console.error('localStorage save failed completely:', e2);
+    }
   }
 }
 
@@ -1555,7 +1574,10 @@ function render() {
     grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">📭</div><h3>商品がありません</h3><p>＋ボタンから追加してください</p></div>`;
     return;
   }
-  grid.innerHTML = list.map(item => renderItemCard(item, item.photoUrl || item.photo || null)).join('');
+  grid.innerHTML = list.map(item => {
+    const photoSrc = item.photoUrl || item.photo || photoPreviewMap.get(String(item.id)) || null;
+    return renderItemCard(item, photoSrc);
+  }).join('');
 }
 
 function renderItemCard(item, photoUrl) {
@@ -1827,17 +1849,15 @@ async function saveItem() {
 
   // ===== 写真のDriveアップロード =====
   if(photoSourceForUpload && SCRIPT_URL) {
-    // ① まず圧縮版を即時表示
+    // ① プレビューをメモリMapに保存（localStorageには保存しない）
     try {
       const previewCompressed = await compressPhoto(photoSourceForUpload, 'fallback');
-      const preIdx = items.findIndex(i=>String(i.id)===String(saved.id));
-      if(preIdx >= 0) { items[preIdx].photo = previewCompressed; items[preIdx].photoUrl = ''; }
-      safeSetItems(items);
-      render();
+      photoPreviewMap.set(String(saved.id), previewCompressed);
+      render(); // メモリMapから即時表示
       showToast('📸 写真をDriveに保存中...');
     } catch(e) { console.warn('preview compress failed:', e); }
 
-    // ② Drive高画質アップロード（失敗しても登録には影響しない）
+    // ② Drive高画質アップロード
     try {
       const compressed = await compressPhoto(photoSourceForUpload, true);
       const res = await fetch(SCRIPT_URL, {
@@ -1853,11 +1873,11 @@ async function saveItem() {
         if(idx >= 0) {
           items[idx].photoUrl = result.url;
           items[idx].photo    = '';
+          photoPreviewMap.delete(String(saved.id)); // メモリプレビュー削除
           safeSetItems(items);
           render();
           showToast('📸 写真をDriveに保存しました');
           // Drive URLをサーバーに送る（他デバイスで同期できるよう）
-          // pushItemはphotoUrl→photoに変換してからGASに送る
           try { await pushItem(items[idx]); } catch(e2) {}
         } else {
           safeSetItems(items);
@@ -1869,12 +1889,13 @@ async function saveItem() {
       }
     } catch(e) {
       console.error('Drive upload error:', e);
-      // 再試行キューに保存（次の同期時に自動アップロード）
+      // プレビューはメモリMapに残す（アプリ閉じるまで表示継続）
+      // 再試行キューに保存
       try {
         const queuePhoto = await compressPhoto(photoSourceForUpload, true);
         if(!pendingPhotos.find(p => p.id === saved.id)) {
           pendingPhotos.push({id: saved.id, photo: queuePhoto});
-          if(pendingPhotos.length > 10) pendingPhotos.shift(); // 上限10件に変更
+          if(pendingPhotos.length > 10) pendingPhotos.shift();
           savePendingPhotos();
         }
         showToast('📸 写真は次回同期時に自動アップロードされます');
