@@ -1012,8 +1012,8 @@ function compressPhoto(dataUrl, mode) {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX     = mode === true ? 1200 : mode === 'fallback' ? 100 : 100;
-      const quality = mode === true ? 0.92  : mode === 'fallback' ? 0.5 : 0.2;
+      const MAX     = mode === true ? 500 : mode === 'fallback' ? 100 : 100;
+      const quality = mode === true ? 0.85  : mode === 'fallback' ? 0.5 : 0.2;
       let w = img.width, h = img.height;
       if(w > MAX || h > MAX) {
         if(w > h) { h = Math.round(h * MAX / w); w = MAX; }
