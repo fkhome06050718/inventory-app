@@ -16,20 +16,12 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Google Apps Script API → 常にネットワーク直通
-  if(url.hostname === 'script.google.com') {
-    // 大容量POSTリクエスト（写真アップロード）はSWをスキップ
-    const contentLength = event.request.headers.get('Content-Length');
-    const isLargePost = event.request.method === 'POST' && 
-      (!contentLength || parseInt(contentLength) > 50000);
-    
-    if(isLargePost) {
-      // respondWithを呼ばずreturnするとSafariでエラーになるため
-      // 素通しでfetchする
-      event.respondWith(fetch(event.request));
-      return;
-    }
+  // POSTリクエストはSWで一切触らない
+  // iOS SafariはSW経由の大容量POSTボディを処理できないため
+  if(event.request.method === 'POST') return;
 
+  // Google Apps Script API (GET) → ネットワーク直通
+  if(url.hostname === 'script.google.com') {
     event.respondWith(
       fetch(event.request).catch(() =>
         new Response('{"error":"offline"}', {
