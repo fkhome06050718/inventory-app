@@ -966,8 +966,15 @@ let items = JSON.parse(localStorage.getItem('inventory_items') || '[]');
 function normalizePhotoUrl(url) {
   if(!url) return '';
   if(url.startsWith('data:')) return url;
+  // lh3形式 → thumbnail形式に変換
   if(url.includes('lh3.googleusercontent.com')) {
-    return url.replace(/https:\/\/lh3\.googleusercontent\.com\/d\/([^=]+)=w400/, 'https://drive.google.com/uc?id=$1&export=view');
+    const m = url.match(/\/d\/([^=?&]+)/);
+    if(m) return 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w1200';
+  }
+  // uc?export=view形式 → thumbnail形式に変換
+  if(url.includes('drive.google.com/uc')) {
+    const m = url.match(/[?&]id=([^&]+)/);
+    if(m) return 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w1200';
   }
   return url;
 }
@@ -1413,18 +1420,11 @@ async function syncNow() {
                         : (local ? Number(local.opened)||0 : 0),
             openDate:    serverItem.openDate    || (local ? local.openDate    || '' : ''),
             subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
-            // photo列の値を解析してphotoUrl/photoに振り分け
-            // lh3形式の古いURLは uc 形式に変換
-            photoUrl: (() => {
-              const p = String(serverItem.photo || '');
-              if(p.startsWith('http')) {
-                return p.includes('lh3.googleusercontent.com')
-                  ? p.replace(/https:\/\/lh3\.googleusercontent\.com\/d\/([^=]+)=w400/, 'https://drive.google.com/uc?id=$1&export=view')
-                  : p;
-              }
-              return local ? local.photoUrl || '' : '';
-            })(),
-            photo: (serverItem.photo && String(serverItem.photo).startsWith('data:'))
+            // photo列の値を解析してphotoUrl/photoに振り分け・URL正規化
+            photoUrl: (serverItem.photo && String(serverItem.photo).startsWith('http'))
+                        ? normalizePhotoUrl(String(serverItem.photo))
+                        : (local ? local.photoUrl || '' : ''),
+            photo:    (serverItem.photo && String(serverItem.photo).startsWith('data:'))
                         ? String(serverItem.photo)
                         : (local ? local.photo || '' : ''),
           });
@@ -1582,7 +1582,10 @@ function render() {
 
 function renderItemCard(item, photoUrl) {
   const icon = ICONS[item.category]||'📂';
-  const photoHtml = photoUrl ? `<img src="${photoUrl}" alt="${esc(item.name)}">` : `<span style="font-size:36px">${icon}</span>`;
+  const photoHtml = photoUrl
+    ? `<img src="${photoUrl}" alt="${esc(item.name)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+      + `<span style="font-size:36px;display:none">${icon}</span>`
+    : `<span style="font-size:36px">${icon}</span>`;
   const opened   = Number(item.opened) || 0;
   const unopened = Math.max(0, Number(item.qty) - opened);
   const openedBadge = opened > 0
