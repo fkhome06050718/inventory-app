@@ -1,11 +1,12 @@
 // おうち在庫管理 - Service Worker
-const CACHE_NAME = 'ouchi-inventory-v5';
+// iOS Safariでの写真アップロード問題を避けるためfetchイベントは処理しない
 
 self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
+  // 古いキャッシュを全て削除
   event.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.map(k => caches.delete(k)))
@@ -13,44 +14,8 @@ self.addEventListener('activate', event => {
   );
 });
 
-self.addEventListener('fetch', event => {
-  const url = new URL(event.request.url);
-
-  // POSTリクエストはSWで一切触らない
-  // iOS SafariはSW経由の大容量POSTボディを処理できないため
-  if(event.request.method === 'POST') return;
-
-  // Google Apps Script API (GET) → ネットワーク直通
-  if(url.hostname === 'script.google.com') {
-    event.respondWith(
-      fetch(event.request).catch(() =>
-        new Response('{"error":"offline"}', {
-          headers: {'Content-Type': 'application/json'}
-        })
-      )
-    );
-    return;
-  }
-
-  // HTMLファイル → 常にネットワーク優先
-  if(event.request.destination === 'document') {
-    event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
-    );
-    return;
-  }
-
-  // その他 → ネットワーク優先、失敗時はキャッシュ
-  event.respondWith(
-    fetch(event.request).then(res => {
-      if(res.ok) {
-        const clone = res.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-      }
-      return res;
-    }).catch(() => caches.match(event.request))
-  );
-});
+// fetchイベントを処理しない → 全リクエストをブラウザが直接処理
+// これによりiOS SafariでのPOST失敗問題が解消される
 
 self.addEventListener('message', event => {
   if(event.data === 'skipWaiting') self.skipWaiting();
