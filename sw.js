@@ -1,5 +1,5 @@
 // おうち在庫管理 - Service Worker
-const CACHE_NAME = 'ouchi-inventory-v4';
+const CACHE_NAME = 'ouchi-inventory-v5';
 
 self.addEventListener('install', event => {
   self.skipWaiting();
@@ -16,21 +16,14 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Google Apps Script API → ネットワークのみ（インターセプトしない）
-  // JSON POSTリクエスト（写真アップロード）は特にそのまま通す
+  // Google Apps Script API → 常にネットワーク直通
+  // ※ return だけするとSafariでLoad failedになるため必ずrespondWithを呼ぶ
   if(url.hostname === 'script.google.com') {
-    const isJsonPost = event.request.method === 'POST' &&
-      (event.request.headers.get('Content-Type') || '').includes('application/json');
-
-    if(isJsonPost) {
-      // 写真アップロード等のJSONリクエストはそのまま通す（SWが触らない）
-      return;
-    }
-
-    // 通常APIリクエスト：失敗時はofflineエラーを返す
     event.respondWith(
-      fetch(event.request).catch(() =>
-        new Response('{"error":"offline"}', { headers: {'Content-Type':'application/json'} })
+      fetch(event.request.clone()).catch(() =>
+        new Response('{"error":"offline"}', {
+          headers: {'Content-Type': 'application/json'}
+        })
       )
     );
     return;
