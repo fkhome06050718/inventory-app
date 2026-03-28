@@ -1867,11 +1867,13 @@ async function saveItem() {
     // ② Drive高画質アップロード
     try {
       const compressed = await compressPhoto(photoSourceForUpload, true);
+      // cache: 'no-store' + keepalive でSWをバイパスして直接送信
       const res = await fetch(SCRIPT_URL, {
         method:  'POST',
         cache:   'no-store',
         headers: {'Content-Type': 'application/json'},
         body:    JSON.stringify({action: 'uploadPhoto', password: APP_PW, id: saved.id, photo: compressed}),
+        keepalive: false,
       });
       if(!res.ok) throw new Error('HTTP ' + res.status);
       const result = await res.json();
