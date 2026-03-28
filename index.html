@@ -643,7 +643,7 @@ select.form-input { cursor: pointer; }
         <div class="photo-upload" onclick="document.getElementById('photoInput').click()" id="photoUploadArea">
           <div style="font-size:26px;margin-bottom:4px">📷</div>
           <div style="font-size:12px;color:var(--text-muted)">タップして写真を追加</div>
-          <input type="file" id="photoInput" accept="image/*" capture="environment" onchange="previewPhoto(event)" />
+          <input type="file" id="photoInput" accept="image/*" onchange="previewPhoto(event)" />
           <img id="photoPreview" alt="プレビュー" />
         </div>
       </div>
