@@ -17,10 +17,21 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
   // Google Apps Script API → 常にネットワーク直通
-  // ※ return だけするとSafariでLoad failedになるため必ずrespondWithを呼ぶ
   if(url.hostname === 'script.google.com') {
+    // 大容量POSTリクエスト（写真アップロード）はSWをスキップ
+    const contentLength = event.request.headers.get('Content-Length');
+    const isLargePost = event.request.method === 'POST' && 
+      (!contentLength || parseInt(contentLength) > 50000);
+    
+    if(isLargePost) {
+      // respondWithを呼ばずreturnするとSafariでエラーになるため
+      // 素通しでfetchする
+      event.respondWith(fetch(event.request));
+      return;
+    }
+
     event.respondWith(
-      fetch(event.request.clone()).catch(() =>
+      fetch(event.request).catch(() =>
         new Response('{"error":"offline"}', {
           headers: {'Content-Type': 'application/json'}
         })
