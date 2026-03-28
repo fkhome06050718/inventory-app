@@ -1286,12 +1286,6 @@ async function retryPendingPhotos() {
         if(idx>=0) {
           items[idx].photoUrl = result.url;
           items[idx].photo    = '';
-          // Drive URLをサーバーに書き戻す
-          try {
-            const forGas = Object.assign({}, items[idx], {photo: result.url});
-            delete forGas.photoUrl;
-            await api('save', {item: JSON.stringify(forGas)});
-          } catch(e2) { console.warn('retry photo push failed:', e2); }
         }
         safeSetItems(items);
         pendingPhotos = pendingPhotos.filter(x => x.id !== p.id);
@@ -1845,15 +1839,6 @@ async function saveItem() {
         if(idx >= 0) {
           items[idx].photoUrl = result.url;
           items[idx].photo    = '';
-          // Drive URLをサーバーのphoto列に書き戻す（他デバイスで同期できるよう）
-          try {
-            const forGas = Object.assign({}, items[idx], {photo: result.url, photoUrl: undefined});
-            delete forGas.photoUrl;
-            await api('save', {item: JSON.stringify(forGas)});
-          } catch(e2) {
-            // 失敗しても次のsyncNow時にpendingSyncで再送される
-            console.warn('Drive URL push failed:', e2);
-          }
         }
         safeSetItems(items);
         render();
