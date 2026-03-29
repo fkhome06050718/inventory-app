@@ -1434,18 +1434,17 @@ async function syncNow() {
           });
         });
 
-      // ローカルにあってサーバーにない＆削除済みでない → 未同期として保持
+      // ローカルにあってサーバーにない → pendingSyncにある場合のみ保持
+      // pendingSyncにない場合は別デバイスで削除されたとみなして除外
       items.forEach(localItem => {
         const lid = String(localItem.id);
         if(!serverIds.has(lid) && !deletedIds.has(lid)) {
-          merged.unshift(localItem);
-          if(!pendingSync.find(p => p.id === localItem.id)) {
-            // base64写真はpendingSyncに保存しない（localStorage節約）
-            const queueItem = Object.assign({}, localItem);
-            if(queueItem.photo && queueItem.photo.startsWith('data:')) queueItem.photo = '';
-            pendingSync.push(queueItem);
-            savePending();
+          const inPending = pendingSync.find(p => String(p.id) === lid);
+          if(inPending) {
+            // 未同期で作成したアイテム → 保持して再送
+            merged.unshift(localItem);
           }
+          // pendingSyncにないものは別デバイスで削除されたとみなし何もしない
         }
       });
 
