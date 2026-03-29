@@ -255,8 +255,8 @@ body {
 .expiry-warn { background: var(--warning-light); color: var(--warning); }
 .expiry-expired { background: var(--danger-light); color: var(--danger); }
 
-.item-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border); }
-.qty-control { display: flex; align-items: center; gap: 6px; }
+.item-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 6px; }
+.qty-control { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .qty-btn { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--text); font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); font-family: inherit; }
 .qty-btn:active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); transform: scale(0.9); }
 .qty-value { font-size: 14px; font-weight: 700; min-width: 22px; text-align: center; }
@@ -288,7 +288,7 @@ body {
 .shopping-check { width:22px; height:22px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
 .shopping-name { flex:1; font-size:13.5px; font-weight:500; }
 .shopping-reason { font-size:11px; color:var(--text-muted); margin-top:2px; }
-.item-actions { display: flex; gap: 5px; }
+.item-actions { display: flex; gap: 5px; flex-shrink: 0; margin-left: auto; }
 .icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--text-muted); font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); }
 .icon-btn:active { background: var(--danger-light); color: var(--danger); }
 
@@ -1613,10 +1613,11 @@ function renderItemCard(item, photoUrl) {
         ${item.note?`<div class="item-meta-row">📝 ${esc(item.note)}</div>`:''}
         <div class="item-meta-row">📅 ${item.date||'—'}</div>
       </div>
+      ${opened > 0 ? `<div style="margin-bottom:6px">${openedBadge}</div>` : ''}
       <div class="item-footer">
         <div class="qty-control">
           <button class="qty-btn" onclick="chQty('${item.id}',-1)">−</button>
-          ${qtyDisplay}
+          ${opened > 0 ? `<span class="qty-value" style="font-size:12px">未開封 ${unopened}</span>` : `<span class="qty-value">${item.qty}</span>`}
           <button class="qty-btn" onclick="chQty('${item.id}',1)">＋</button>
         </div>
         <div class="item-actions">
