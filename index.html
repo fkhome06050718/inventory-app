@@ -623,8 +623,13 @@ select.form-input { cursor: pointer; }
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">商品名 *</label>
-        <input type="text" class="form-input" id="itemName" placeholder="例：牛乳、洗剤など" autocomplete="off" />
+        <label class="form-label">品目 <span style="font-size:10px;color:var(--text-muted);font-weight:400">（シャンプー・洗剤など）</span></label>
+        <input type="text" class="form-input" id="itemProductType" placeholder="例：シャンプー、牛乳、洗剤など" autocomplete="off" list="productTypeList" />
+        <datalist id="productTypeList"></datalist>
+      </div>
+      <div class="form-group">
+        <label class="form-label">商品名 <span style="font-size:10px;color:var(--text-muted);font-weight:400">（ブランド・種類名）</span></label>
+        <input type="text" class="form-input" id="itemName" placeholder="例：パンテーン、明治おいしい牛乳" autocomplete="off" />
       </div>
       <div class="form-group">
         <label class="form-label">カテゴリー *</label>
@@ -1540,7 +1545,11 @@ function expiryBadge(expiry) {
 function getFiltered() {
   let list = [...items];
   const q = document.getElementById('searchInput').value.toLowerCase();
-  if(q) list = list.filter(i => (i.name||'').toLowerCase().includes(q)||(i.note||'').toLowerCase().includes(q));
+  if(q) list = list.filter(i =>
+    (i.name||'').toLowerCase().includes(q) ||
+    (i.productType||'').toLowerCase().includes(q) ||
+    (i.note||'').toLowerCase().includes(q)
+  );
   if(currentFilter==='expiring') list=list.filter(i=>{if(!i.expiry)return false;const d=getExpiryInfo(i.expiry).days;return d>=0&&d<=EXPIRY_WARN;});
   else if(currentFilter==='expired') list=list.filter(i=>i.expiry&&getExpiryInfo(i.expiry).days<0);
   else if(currentFilter==='low') list=list.filter(i=>Number(i.qty) <= Number(i.minStock ?? 1));
@@ -1552,6 +1561,14 @@ function getFiltered() {
       const catOrder = categories.map(c=>c.name);
       const ai = catOrder.indexOf(a.category), bi = catOrder.indexOf(b.category);
       if(ai !== bi) return (ai===-1?999:ai) - (bi===-1?999:bi);
+      // 同カテゴリー内はサブカテゴリー順 → その中で名前順
+      const cat = categories.find(c => c.name === a.category);
+      const subOrder = cat ? (cat.subs || []) : [];
+      const asi = subOrder.indexOf(a.subcategory||''), bsi = subOrder.indexOf(b.subcategory||'');
+      // サブカテゴリーなしは末尾
+      const aSubRank = asi === -1 ? 999 : asi;
+      const bSubRank = bsi === -1 ? 999 : bsi;
+      if(aSubRank !== bSubRank) return aSubRank - bSubRank;
       return (a.name||'').localeCompare(b.name||'','ja');
     }
     if(currentSort==='date') return (b.date||'').localeCompare(a.date||'');
@@ -1606,7 +1623,7 @@ function renderItemCard(item, photoUrl) {
     <div class="item-photo">${photoHtml}</div>
     <div class="category-tag">${icon} ${esc(item.category)}${item.subcategory ? ` › ${esc(item.subcategory)}` : ''}</div>
     <div class="item-body">
-      <div class="item-name">${esc(item.name)}</div>
+      <div class="item-name">${item.productType ? `<span style="font-size:10px;font-weight:500;color:var(--text-muted);display:block;margin-bottom:1px">${esc(item.productType)}</span>` : ''}${esc(item.name)}</div>
       <div class="item-meta">
         ${item.expiry?`<div class="item-meta-row">${expiryBadge(item.expiry)}</div>`:''}
         ${Number(item.qty) <= Number(item.minStock ?? 1) ? `<div class="item-meta-row"><span class="expiry-badge" style="background:#FFF3E0;color:#E65100;border-color:#FFB74D40">📉 残り少ない</span></div>` : ''}
@@ -1746,6 +1763,7 @@ function editItem(id) {
   if(!item) return;
   editingId = id;
   document.getElementById('modalTitle').textContent = '商品を編集';
+  document.getElementById('itemProductType').value = item.productType||'';
   document.getElementById('itemName').value = item.name||'';
   document.getElementById('itemCategory').value = item.category||'';
   document.getElementById('itemExpiry').value = item.expiry||'';
@@ -1789,18 +1807,20 @@ async function saveItem() {
   const existingPhoto    = existingItem ? (existingItem.photo    || '') : '';
 
   // ===== データ収集 =====
-  let openedVal = 0, subcat = '', minStock = 1, expiry = '', qty = 1, note = '';
-  try { openedVal = parseInt(document.getElementById('itemOpened').value)  || 0; } catch(e) {}
-  try { subcat    = document.getElementById('itemSubcategory').value        || ''; } catch(e) {}
-  try { minStock  = parseInt(document.getElementById('itemMinStock').value) || 1; } catch(e) {}
-  try { expiry    = document.getElementById('itemExpiry').value             || ''; } catch(e) {}
-  try { qty       = parseInt(document.getElementById('itemQty').value)      || 1; } catch(e) {}
-  try { note      = document.getElementById('itemNote').value.trim()        || ''; } catch(e) {}
+  let openedVal = 0, subcat = '', minStock = 1, expiry = '', qty = 1, note = '', productType = '';
+  try { openedVal    = parseInt(document.getElementById('itemOpened').value)      || 0;  } catch(e) {}
+  try { subcat       = document.getElementById('itemSubcategory').value            || ''; } catch(e) {}
+  try { minStock     = parseInt(document.getElementById('itemMinStock').value)     || 1;  } catch(e) {}
+  try { expiry       = document.getElementById('itemExpiry').value                 || ''; } catch(e) {}
+  try { qty          = parseInt(document.getElementById('itemQty').value)          || 1;  } catch(e) {}
+  try { note         = document.getElementById('itemNote').value.trim()            || ''; } catch(e) {}
+  try { productType  = document.getElementById('itemProductType').value.trim()     || ''; } catch(e) {}
   let openDate = '';
   try { openDate  = openedVal > 0 ? (document.getElementById('itemOpenDate').value || '') : ''; } catch(e) {}
 
   const data = {
     name, category,
+    productType,
     subcategory: subcat,
     expiry, qty, minStock,
     opened: openedVal, openDate,
@@ -1981,6 +2001,7 @@ function openModal() {
   editingId = null;
   originalPhotoData = null;
   document.getElementById('modalTitle').textContent = '商品を追加';
+  document.getElementById('itemProductType').value = '';
   ['itemName','itemNote'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('itemCategory').value='';
   document.getElementById('subcategoryGroup').style.display='none';
@@ -1992,7 +2013,16 @@ function openModal() {
   document.getElementById('itemOpenDate').value='';
   document.getElementById('openDateGroup').style.display='none';
   document.getElementById('photoPreview').style.display='none';
+  updateProductTypeDatalist();
   document.getElementById('modalOverlay').classList.add('open');
+}
+
+// 品目のdatalistを既存アイテムから更新
+function updateProductTypeDatalist() {
+  const dl = document.getElementById('productTypeList');
+  if(!dl) return;
+  const types = [...new Set(items.map(i=>i.productType).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ja'));
+  dl.innerHTML = types.map(t=>`<option value="${esc(t)}">`).join('');
 }
 
 function closeModal() {
@@ -2479,14 +2509,38 @@ function renderCategoryList() {
 
 function editCategoryInline(i) {
   const cat = categories[i];
-  const newIcon = prompt(`「${cat.name}」の絵文字を変更\n（1文字の絵文字を入力してください）`, cat.icon);
-  if(!newIcon || !newIcon.trim()) return;
-  categories[i].icon = newIcon.trim();
+
+  // 名前変更
+  const newName = prompt(`カテゴリー名を編集してください`, cat.name);
+  if(newName === null) return; // キャンセル
+  const trimmedName = newName.trim();
+  if(!trimmedName) { showToast('⚠️ カテゴリー名を入力してください'); return; }
+  if(trimmedName !== cat.name && categories.find((c,idx) => c.name === trimmedName && idx !== i)) {
+    showToast('⚠️ 同じ名前のカテゴリーが既に存在します'); return;
+  }
+
+  // アイコン変更
+  const newIcon = prompt(`絵文字を変更してください\n（1文字の絵文字を入力してください）`, cat.icon);
+  if(newIcon === null) return; // キャンセル
+
+  const oldName = cat.name;
+  const trimmedIcon = newIcon.trim() || cat.icon;
+
+  // 名前が変わった場合はアイテムのcategoryも更新
+  if(trimmedName !== oldName) {
+    items.forEach(item => {
+      if(item.category === oldName) item.category = trimmedName;
+    });
+    safeSetItems(items);
+  }
+
+  categories[i].name = trimmedName;
+  categories[i].icon = trimmedIcon;
   saveCategories();
   renderCategoryUI();
   render();
   renderCategoryList();
-  showToast(`✅ 「${cat.name}」の絵文字を変更しました`);
+  showToast(`✅ 「${trimmedIcon} ${trimmedName}」に変更しました`);
 }
 
 function deleteCategory(i) {
