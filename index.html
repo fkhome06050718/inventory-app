@@ -628,7 +628,7 @@ select.form-input { cursor: pointer; }
         <datalist id="productTypeList"></datalist>
       </div>
       <div class="form-group">
-        <label class="form-label">商品名 <span style="font-size:10px;color:var(--text-muted);font-weight:400">（ブランド・種類名）</span></label>
+        <label class="form-label">商品名 <span style="font-size:10px;color:var(--text-muted);font-weight:400">（任意）</span></label>
         <input type="text" class="form-input" id="itemName" placeholder="例：パンテーン、明治おいしい牛乳" autocomplete="off" />
       </div>
       <div class="form-group">
@@ -664,9 +664,14 @@ select.form-input { cursor: pointer; }
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">📉 残り少ない在庫</label>
-          <input type="number" class="form-input" id="itemMinStock" value="1" min="0" inputmode="numeric" />
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px">この数量以下で「残り少ない」に表示</div>
+          <label class="form-label">📉 残り少ない</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="number" class="form-input" id="itemMinStock" placeholder="閾値（任意）" min="0" inputmode="numeric" style="flex:1" oninput="onMinStockInput()" />
+            <button type="button" id="lowFlagBtn" onclick="toggleLowFlag()" style="flex-shrink:0;padding:8px 12px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface2);font-size:12px;cursor:pointer;white-space:nowrap;font-family:inherit">
+              📉 手動フラグ: OFF
+            </button>
+          </div>
+          <div id="minStockHint" style="font-size:11px;color:var(--text-muted);margin-top:4px">数字を入力→その数量以下で表示 / 空欄→右のボタンで手動設定</div>
         </div>
         <div class="form-group">
           <label class="form-label">📦 うち開封中</label>
@@ -1423,7 +1428,7 @@ async function syncNow() {
           const local = localMap[String(serverItem.id)];
           return Object.assign({}, serverItem, {
             qty:      Number(serverItem.qty) || 0,
-            minStock: serverItem.minStock !== undefined ? Number(serverItem.minStock) : (local ? Number(local.minStock ?? 1) : 1),
+            minStock: serverItem.minStock !== '' && serverItem.minStock !== undefined ? (serverItem.minStock !== null ? Number(serverItem.minStock) : null) : (local ? local.minStock ?? null : null),
             opened:   (serverItem.opened !== '' && serverItem.opened !== undefined)
                         ? Number(serverItem.opened)
                         : (local ? Number(local.opened)||0 : 0),
@@ -1544,6 +1549,14 @@ function expiryBadge(expiry) {
   return `<span class="expiry-badge expiry-ok">✅ ${expiry}</span>`;
 }
 
+// 残り少ない判定：閾値がある→数量比較、ない→lowFlagで判定
+function isLowStock(item) {
+  if(item.minStock !== null && item.minStock !== undefined && item.minStock !== '') {
+    return Number(item.qty) <= Number(item.minStock);
+  }
+  return !!item.lowFlag;
+}
+
 function getFiltered() {
   let list = [...items];
   const q = document.getElementById('searchInput').value.toLowerCase();
@@ -1554,7 +1567,7 @@ function getFiltered() {
   );
   if(currentFilter==='expiring') list=list.filter(i=>{if(!i.expiry)return false;const d=getExpiryInfo(i.expiry).days;return d>=0&&d<=EXPIRY_WARN;});
   else if(currentFilter==='expired') list=list.filter(i=>i.expiry&&getExpiryInfo(i.expiry).days<0);
-  else if(currentFilter==='low') list=list.filter(i=>Number(i.qty) <= Number(i.minStock ?? 1));
+  else if(currentFilter==='low') list=list.filter(i=>isLowStock(i));
   else if(currentFilter!=='all') list=list.filter(i=>i.category===currentFilter);
   list.sort((a,b)=>{
     if(currentSort==='name') return (a.name||'').localeCompare(b.name||'','ja');
@@ -1628,7 +1641,7 @@ function renderItemCard(item, photoUrl) {
       <div class="item-name">${item.productType ? `<span style="font-size:13.5px;font-weight:600;display:block">${esc(item.productType)}</span>` : ''}<span style="font-size:${item.productType ? '11px' : '13.5px'};font-weight:${item.productType ? '400' : '600'};color:${item.productType ? 'var(--text-muted)' : 'inherit'}">${esc(item.name)}</span></div>
       <div class="item-meta">
         ${item.expiry?`<div class="item-meta-row">${expiryBadge(item.expiry)}</div>`:''}
-        ${Number(item.qty) <= Number(item.minStock ?? 1) ? `<div class="item-meta-row"><span class="expiry-badge" style="background:#FFF3E0;color:#E65100;border-color:#FFB74D40">📉 残り少ない</span></div>` : ''}
+        ${isLowStock(item) ? `<div class="item-meta-row"><span class="expiry-badge" style="background:#FFF3E0;color:#E65100;border-color:#FFB74D40">📉 残り少ない</span></div>` : ''}
         ${item.note?`<div class="item-meta-row">📝 ${esc(item.note)}</div>`:''}
         <div class="item-meta-row">📅 ${item.date||'—'}</div>
       </div>
@@ -1770,10 +1783,13 @@ function editItem(id) {
   document.getElementById('itemCategory').value = item.category||'';
   document.getElementById('itemExpiry').value = item.expiry||'';
   document.getElementById('itemQty').value = item.qty||1;
-  document.getElementById('itemMinStock').value = item.minStock ?? 1;
+  // minStock: nullなら空欄、数値なら表示
+  document.getElementById('itemMinStock').value = (item.minStock !== null && item.minStock !== undefined) ? item.minStock : '';
   document.getElementById('itemOpened').value = item.opened||0;
   document.getElementById('itemOpenDate').value = item.openDate||'';
   document.getElementById('itemNote').value = item.note||'';
+  setLowFlagBtn(!!item.lowFlag);
+  updateMinStockHint();
   renderSubcategorySelect(item.subcategory||'');
   toggleOpenDateField();
   const prev = document.getElementById('photoPreview');
@@ -1789,8 +1805,9 @@ async function saveItem() {
   const categoryEl = document.getElementById('itemCategory');
   const name       = nameEl ? nameEl.value.trim() : '';
   const category   = categoryEl ? categoryEl.value : '';
+  const productTypeVal = document.getElementById('itemProductType')?.value.trim() || '';
 
-  if(!name)     { showToast('⚠️ 商品名を入力してください'); return; }
+  if(!name && !productTypeVal) { showToast('⚠️ 品目か商品名を入力してください'); return; }
   if(!category) { showToast('⚠️ カテゴリーを選択してください'); return; }
 
   // ===== 写真データ確保（closeModal前に取得） =====
@@ -1809,14 +1826,18 @@ async function saveItem() {
   const existingPhoto    = existingItem ? (existingItem.photo    || '') : '';
 
   // ===== データ収集 =====
-  let openedVal = 0, subcat = '', minStock = 1, expiry = '', qty = 1, note = '', productType = '';
+  let openedVal = 0, subcat = '', minStock = null, expiry = '', qty = 1, note = '', productType = '', lowFlag = false;
   try { openedVal    = parseInt(document.getElementById('itemOpened').value)      || 0;  } catch(e) {}
   try { subcat       = document.getElementById('itemSubcategory').value            || ''; } catch(e) {}
-  try { minStock     = parseInt(document.getElementById('itemMinStock').value)     || 1;  } catch(e) {}
+  try {
+    const ms = document.getElementById('itemMinStock').value;
+    minStock = (ms !== '' && ms !== null && ms !== undefined) ? parseInt(ms) : null;
+  } catch(e) {}
   try { expiry       = document.getElementById('itemExpiry').value                 || ''; } catch(e) {}
   try { qty          = parseInt(document.getElementById('itemQty').value)          || 1;  } catch(e) {}
   try { note         = document.getElementById('itemNote').value.trim()            || ''; } catch(e) {}
-  try { productType  = document.getElementById('itemProductType').value.trim()     || ''; } catch(e) {}
+  try { productType  = productTypeVal; } catch(e) {}
+  try { lowFlag      = document.getElementById('lowFlagBtn')?.dataset.active === '1'; } catch(e) {}
   let openDate = '';
   try { openDate  = openedVal > 0 ? (document.getElementById('itemOpenDate').value || '') : ''; } catch(e) {}
 
@@ -1824,7 +1845,9 @@ async function saveItem() {
     name, category,
     productType,
     subcategory: subcat,
-    expiry, qty, minStock,
+    expiry, qty,
+    minStock,
+    lowFlag,
     opened: openedVal, openDate,
     note,
     photo:    isNewPhoto ? '' : existingPhoto,
@@ -2010,13 +2033,59 @@ function openModal() {
   document.getElementById('itemSubcategory').innerHTML='<option value="">なし</option>';
   document.getElementById('itemExpiry').value='';
   document.getElementById('itemQty').value='1';
-  document.getElementById('itemMinStock').value='1';
+  document.getElementById('itemMinStock').value=''; // 空欄
   document.getElementById('itemOpened').value='0';
   document.getElementById('itemOpenDate').value='';
   document.getElementById('openDateGroup').style.display='none';
   document.getElementById('photoPreview').style.display='none';
+  setLowFlagBtn(false);
+  updateMinStockHint();
   updateProductTypeDatalist();
   document.getElementById('modalOverlay').classList.add('open');
+}
+
+// 手動フラグボタンの状態を設定
+function setLowFlagBtn(active) {
+  const btn = document.getElementById('lowFlagBtn');
+  if(!btn) return;
+  btn.dataset.active = active ? '1' : '0';
+  btn.textContent = active ? '📉 手動フラグ: ON' : '📉 手動フラグ: OFF';
+  btn.style.background = active ? 'var(--accent)' : 'var(--surface2)';
+  btn.style.color = active ? '#fff' : 'inherit';
+  btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+}
+
+function toggleLowFlag() {
+  const btn = document.getElementById('lowFlagBtn');
+  setLowFlagBtn(btn?.dataset.active !== '1');
+}
+
+// 閾値入力時にボタンの表示を制御
+function onMinStockInput() {
+  const ms = document.getElementById('itemMinStock').value;
+  const btn = document.getElementById('lowFlagBtn');
+  if(!btn) return;
+  if(ms !== '') {
+    // 数値入力時はフラグボタンを無効化
+    btn.disabled = true;
+    btn.style.opacity = '0.4';
+    setLowFlagBtn(false);
+  } else {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+  updateMinStockHint();
+}
+
+function updateMinStockHint() {
+  const ms = document.getElementById('itemMinStock')?.value;
+  const hint = document.getElementById('minStockHint');
+  if(!hint) return;
+  if(ms && ms !== '') {
+    hint.textContent = `数量が${ms}以下で「残り少ない」に表示されます`;
+  } else {
+    hint.textContent = '空欄の場合は右のボタンで手動フラグを設定できます';
+  }
 }
 
 // 品目のdatalistを既存アイテムから更新
@@ -2746,8 +2815,11 @@ function buildShoppingList() {
   const list = [];
   items.forEach(item => {
     // 残り少ない
-    if(Number(item.qty) <= Number(item.minStock ?? 1)) {
-      list.push({...item, reason: `残り${item.qty}個（補充目安: ${item.minStock ?? 1}個）`});
+    if(isLowStock(item)) {
+      const reason = (item.minStock !== null && item.minStock !== undefined && item.minStock !== '')
+        ? `残り${item.qty}個（補充目安: ${item.minStock}個）`
+        : `📉 手動フラグ`;
+      list.push({...item, reason});
       return;
     }
     // 期限切れ・期限が近い
@@ -2837,7 +2909,7 @@ function saveAsTemplate() {
     name, category,
     subcategory: document.getElementById('itemSubcategory')?.value || '',
     qty: parseInt(document.getElementById('itemQty')?.value) || 1,
-    minStock: parseInt(document.getElementById('itemMinStock')?.value) || 1,
+    minStock: document.getElementById('itemMinStock')?.value !== '' ? parseInt(document.getElementById('itemMinStock')?.value) : null,
     note: document.getElementById('itemNote')?.value.trim() || '',
   };
   if(templates.find(x => x.name === t.name && x.category === t.category)) {
@@ -2856,7 +2928,9 @@ function applyTemplate(i) {
     document.getElementById('itemName').value = t.name;
     document.getElementById('itemCategory').value = t.category;
     document.getElementById('itemQty').value = t.qty;
-    document.getElementById('itemMinStock').value = t.minStock || 1;
+    document.getElementById('itemMinStock').value = t.minStock !== null && t.minStock !== undefined ? t.minStock : '';
+    setLowFlagBtn(!!t.lowFlag);
+    updateMinStockHint();
     document.getElementById('itemNote').value = t.note || '';
     renderSubcategorySelect(t.subcategory || '');
   }, 50);
