@@ -582,7 +582,7 @@ select.form-input { cursor: pointer; }
       <div class="bottom-nav-items">
         <button class="bottom-nav-item active" id="bnAll" onclick="bnFilter('all',this)"><span class="icon">📦</span>すべて</button>
         <button class="bottom-nav-item" id="bnFridge" onclick="bnFilter('冷蔵庫',this)"><span class="icon">🧊</span>冷蔵庫</button>
-        <button class="bottom-nav-item" onclick="openReceiptModal()"><span class="icon">🧾</span>レシート</button>
+        <button class="bottom-nav-item" id="bnLow" onclick="bnFilter('low',this)"><span class="icon">📉</span>残り少ない</button>
         <button class="bottom-nav-item" id="bnExpiry" onclick="bnFilter('expiring',this)"><span class="icon">⚠️</span>期限</button>
         <button class="bottom-nav-item" onclick="toggleSidebar()"><span class="icon">☰</span>メニュー</button>
       </div>
@@ -2017,8 +2017,9 @@ function sortItems(sort, chip) {
 function bnFilter(filter, btn) {
   document.querySelectorAll('.bottom-nav-item').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  if(filter==='expiring') filterExpiry('expiring',null);
-  else filterCategory(filter,null);
+  if(filter==='expiring') filterExpiry('expiring', null);
+  else if(filter==='low') filterExpiry('low', null);
+  else filterCategory(filter, null);
 }
 
 // ===== MODAL =====
