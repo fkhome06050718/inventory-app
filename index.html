@@ -286,11 +286,13 @@ body {
 .shopping-item { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
 .shopping-item:last-child { border-bottom:none; }
 .shopping-check { width:22px; height:22px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
-.shopping-name { flex:1; font-size:13.5px; font-weight:500; }
+.shopping-name { flex:1; font-size:13.5px; font-weight:500; transition:all 0.2s; }
+.shopping-item.checked .shopping-name { text-decoration:line-through; color:var(--text-muted); }
 .shopping-reason { font-size:11px; color:var(--text-muted); margin-top:2px; }
 .item-actions { display: flex; gap: 5px; flex-shrink: 0; margin-left: auto; }
 .icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--text-muted); font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); }
 .icon-btn:active { background: var(--danger-light); color: var(--danger); }
+.icon-btn.shopping-active { background: #E3F2FD; border-color: #2196F3; }
 
 .category-tag { position: absolute; top: 8px; left: 8px; font-size: 10px; font-weight: 600; padding: 3px 7px; border-radius: 5px; background: rgba(255,255,255,0.92); color: var(--text); border: 1px solid var(--border); backdrop-filter: blur(4px); }
 
@@ -341,6 +343,7 @@ select.form-input { cursor: pointer; }
 .bottom-nav-item .icon { font-size: 22px; }
 .bottom-nav-item.active { color: var(--accent); }
 .bottom-nav-item.active .icon { transform: scale(1.1); }
+.bottom-nav-item:long-press { opacity: 0.7; }
 
 /* FAB - floating add button on mobile */
 .fab { display: none; position: fixed; bottom: calc(var(--safe-bottom) + 72px); right: 20px; width: 56px; height: 56px; background: var(--accent); color: white; border: none; border-radius: 50%; font-size: 26px; cursor: pointer; box-shadow: 0 4px 20px rgba(196,112,74,0.4); z-index: 100; align-items: center; justify-content: center; transition: all var(--transition); }
@@ -579,12 +582,8 @@ select.form-input { cursor: pointer; }
 
     <!-- BOTTOM NAV -->
     <nav class="bottom-nav">
-      <div class="bottom-nav-items">
-        <button class="bottom-nav-item active" id="bnAll" onclick="bnFilter('all',this)"><span class="icon">📦</span>すべて</button>
-        <button class="bottom-nav-item" id="bnFridge" onclick="bnFilter('冷蔵庫',this)"><span class="icon">🧊</span>冷蔵庫</button>
-        <button class="bottom-nav-item" id="bnLow" onclick="bnFilter('low',this)"><span class="icon">📉</span>残り少ない</button>
-        <button class="bottom-nav-item" id="bnExpiry" onclick="bnFilter('expiring',this)"><span class="icon">⚠️</span>期限</button>
-        <button class="bottom-nav-item" onclick="toggleSidebar()"><span class="icon">☰</span>メニュー</button>
+      <div class="bottom-nav-items" id="bottomNavItems">
+        <!-- JS で動的生成 -->
       </div>
     </nav>
   </div>
@@ -1252,6 +1251,7 @@ async function startApp() {
   if(appStarted) return; // 重複起動防止
   appStarted = true;
   renderCategoryUI();
+  renderBottomNav();
   render();
   if(!offlineMode && SCRIPT_URL) {
     syncNow();
@@ -1436,6 +1436,10 @@ async function syncNow() {
             subcategory: serverItem.subcategory || (local ? local.subcategory || '' : ''),
             // productTypeはサーバーになければローカルから補完
             productType: serverItem.productType || (local ? local.productType || '' : ''),
+            // ローカル専用フィールドを保持
+            inShoppingList: local ? (local.inShoppingList || false) : false,
+            updatedAt: serverItem.updatedAt || (local ? local.updatedAt || '' : ''),
+            lowFlag: serverItem.lowFlag !== undefined ? !!serverItem.lowFlag : (local ? !!local.lowFlag : false),
             // photo列の値を解析してphotoUrl/photoに振り分け・URL正規化
             photoUrl: (serverItem.photo && String(serverItem.photo).startsWith('http'))
                         ? normalizePhotoUrl(String(serverItem.photo))
@@ -1653,11 +1657,13 @@ function renderItemCard(item, photoUrl) {
           <button class="qty-btn" onclick="chQty('${item.id}',1)">＋</button>
         </div>
         <div class="item-actions">
+          <button class="icon-btn${item.inShoppingList ? ' shopping-active' : ''}" title="買い物リストに追加" onclick="toggleShoppingList('${item.id}')" style="color:${item.inShoppingList ? '#2196F3' : 'var(--text-muted)'}">🛒</button>
           <button class="icon-btn" title="開封数を変更" onclick="changeOpened('${item.id}')" style="color:${opened>0?'#E65100':'var(--text-muted)'}">📂</button>
           <button class="icon-btn" onclick="editItem('${item.id}')" style="color:var(--text-muted)">✏️</button>
           <button class="icon-btn" onclick="delItem('${item.id}')">🗑️</button>
         </div>
       </div>
+      ${item.updatedAt ? `<div style="font-size:10px;color:var(--text-muted);text-align:right;margin-top:4px">更新: ${item.updatedAt}</div>` : ''}
     </div>
   </div>`;
 }
@@ -1669,8 +1675,8 @@ async function chQty(id, d) {
   const item = items.find(i=>String(i.id)===String(id));
   if(!item) return;
   item.qty = Math.max(0, Number(item.qty)+d);
-  // 開封数が総数を超えないよう調整
   if(Number(item.opened) > item.qty) item.opened = item.qty;
+  item.updatedAt = new Date().toLocaleDateString('ja-JP');
   safeSetItems(items);
   render();
   await pushQty(id, item.qty);
@@ -1853,6 +1859,9 @@ async function saveItem() {
     photo:    isNewPhoto ? '' : existingPhoto,
     photoUrl: isNewPhoto ? '' : existingPhotoUrl,
     date:     new Date().toISOString().split('T')[0],
+    updatedAt: new Date().toLocaleDateString('ja-JP'),
+    // 既存の買い物リストフラグを保持
+    inShoppingList: existingItem ? (existingItem.inShoppingList || false) : false,
   };
 
   // ===== 保存処理 =====
@@ -2015,11 +2024,7 @@ function sortItems(sort, chip) {
 }
 
 function bnFilter(filter, btn) {
-  document.querySelectorAll('.bottom-nav-item').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  if(filter==='expiring') filterExpiry('expiring', null);
-  else if(filter==='low') filterExpiry('low', null);
-  else filterCategory(filter, null);
+  bnAction(filter, btn);
 }
 
 // ===== MODAL =====
@@ -2800,9 +2805,9 @@ function openShoppingList() {
   } else {
     content.innerHTML = list.map((item, i) => `
       <div class="shopping-item">
-        <input type="checkbox" class="shopping-check" id="sc${i}">
+        <input type="checkbox" class="shopping-check" id="sc${i}" onchange="this.closest('.shopping-item').classList.toggle('checked', this.checked)">
         <div style="flex:1">
-          <div class="shopping-name">${esc(item.name)}</div>
+          <div class="shopping-name">${esc(item.displayName || item.name || '')}</div>
           <div class="shopping-reason">${getCatIcon(item.category)} ${esc(item.category)}　${item.reason}</div>
         </div>
       </div>`).join('');
@@ -2815,19 +2820,19 @@ function buildShoppingList() {
   const today = new Date(); today.setHours(0,0,0,0);
   const list = [];
   items.forEach(item => {
-    // 残り少ない
-    if(isLowStock(item)) {
-      const reason = (item.minStock !== null && item.minStock !== undefined && item.minStock !== '')
-        ? `残り${item.qty}個（補充目安: ${item.minStock}個）`
-        : `📉 手動フラグ`;
-      list.push({...item, reason});
+    // 買い物リストフラグが立っているもの
+    if(item.inShoppingList) {
+      const displayName = item.productType ? `${item.productType}（${item.name || ''}）` : (item.name || item.productType || '');
+      list.push({...item, displayName, reason: `🛒 買い物リスト登録済み`});
       return;
     }
-    // 期限切れ・期限が近い
+    // 期限切れ・期限が近いもの（任意で表示）
     if(item.expiry) {
       const days = Math.floor((new Date(item.expiry) - today) / 86400000);
-      if(days < 0) list.push({...item, reason: `🚨 期限切れ（${Math.abs(days)}日経過）`});
-      else if(days <= EXPIRY_WARN) list.push({...item, reason: `⚠️ 期限まで${days}日`});
+      if(days < 0) {
+        const displayName = item.productType ? `${item.productType}（${item.name || ''}）` : (item.name || '');
+        list.push({...item, displayName, reason: `🚨 期限切れ（${Math.abs(days)}日経過）`});
+      }
     }
   });
   return list;
@@ -2838,7 +2843,7 @@ function buildShoppingText() {
   if(list.length === 0) return '買い物リストは空です';
   const date = new Date().toLocaleDateString('ja-JP');
   return `🛒 買い物リスト（${date}）\n\n` +
-    list.map(item => `□ ${item.name}（${item.reason}）`).join('\n');
+    list.map(item => `□ ${item.displayName || item.name || ''}（${item.reason}）`).join('\n');
 }
 
 function copyShoppingList() {
@@ -3004,6 +3009,119 @@ async function bulkDelete() {
 
 // confirmDelete を拡張して一括削除に対応
 const _origConfirmDelete = window.confirmDelete;
+
+// ===== 買い物リスト（手動フラグ） =====
+function toggleShoppingList(id) {
+  const idx = items.findIndex(i=>String(i.id)===String(id));
+  if(idx < 0) return;
+  items[idx].inShoppingList = !items[idx].inShoppingList;
+  safeSetItems(items);
+  render();
+  showToast(items[idx].inShoppingList ? '🛒 買い物リストに追加しました' : '🛒 買い物リストから削除しました');
+  pushItem(items[idx]);
+}
+
+// ===== BOTTOM NAV (カスタマイズ可能) =====
+const BOTTOM_NAV_DEFAULTS = [
+  {icon:'📦', label:'すべて',    filter:'all',      type:'filter'},
+  {icon:'🧊', label:'冷蔵庫',   filter:'冷蔵庫',    type:'filter'},
+  {icon:'📉', label:'残り少ない', filter:'low',      type:'filter'},
+  {icon:'⚠️', label:'期限',      filter:'expiring', type:'filter'},
+  {icon:'☰', label:'メニュー',  filter:'menu',      type:'action'},
+];
+
+let bottomNavConfig = JSON.parse(localStorage.getItem('bottom_nav_config') || 'null') || BOTTOM_NAV_DEFAULTS;
+
+function saveBottomNav() {
+  localStorage.setItem('bottom_nav_config', JSON.stringify(bottomNavConfig));
+}
+
+function renderBottomNav() {
+  const container = document.getElementById('bottomNavItems');
+  if(!container) return;
+  container.innerHTML = bottomNavConfig.map((item, i) => {
+    const isActive = item.filter === currentFilter || (item.filter === 'all' && currentFilter === 'all');
+    return `<button class="bottom-nav-item${isActive?' active':''}"
+      onclick="bnAction('${item.filter}', this)"
+      oncontextmenu="event.preventDefault();openBottomNavEdit(${i})"
+      ontouchstart="startBnLongPress(${i})"
+      ontouchend="clearBnLongPress()"
+      ontouchmove="clearBnLongPress()"
+      id="bn_${i}">
+      <span class="icon">${item.icon}</span>${esc(item.label)}
+    </button>`;
+  }).join('');
+}
+
+let bnLongPressTimer = null;
+function startBnLongPress(i) {
+  bnLongPressTimer = setTimeout(() => openBottomNavEdit(i), 600);
+}
+function clearBnLongPress() {
+  if(bnLongPressTimer) { clearTimeout(bnLongPressTimer); bnLongPressTimer = null; }
+}
+
+function bnAction(filter, btn) {
+  if(filter === 'menu') { toggleSidebar(); return; }
+  if(filter === 'shopping') { openShoppingList(); return; }
+  document.querySelectorAll('.bottom-nav-item').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(filter === 'expiring') filterExpiry('expiring', null);
+  else if(filter === 'low') filterExpiry('low', null);
+  else filterCategory(filter, null);
+}
+
+// 下メニュー編集モーダル
+function openBottomNavEdit(idx) {
+  const item = bottomNavConfig[idx];
+  const choices = [
+    {icon:'📦', label:'すべて',      filter:'all'},
+    {icon:'🧊', label:'冷蔵庫',      filter:'冷蔵庫'},
+    {icon:'🧊', label:'冷凍庫',      filter:'冷凍庫'},
+    {icon:'🥫', label:'パントリー',   filter:'パントリー'},
+    {icon:'🧴', label:'日用品',      filter:'日用品'},
+    {icon:'💊', label:'薬・サプリ',   filter:'薬・サプリ'},
+    {icon:'📉', label:'残り少ない',   filter:'low'},
+    {icon:'⚠️', label:'期限',         filter:'expiring'},
+    {icon:'🛒', label:'買い物リスト', filter:'shopping'},
+    ...categories.map(c=>({icon:c.icon, label:c.name, filter:c.name})),
+  ];
+  // 重複排除
+  const seen = new Set();
+  const uniqueChoices = choices.filter(c => { if(seen.has(c.filter)) return false; seen.add(c.filter); return true; });
+
+  const html = `
+    <div class="modal-overlay open" id="bnEditOverlay" onclick="if(event.target===this)closeBnEdit()">
+      <div class="modal" style="max-width:340px">
+        <div class="modal-handle"></div>
+        <div class="modal-header">
+          <div class="modal-title">ボタン${idx+1}を変更</div>
+          <button class="close-btn" onclick="closeBnEdit()">✕</button>
+        </div>
+        <div class="modal-body" style="padding-bottom:16px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            ${uniqueChoices.map(c=>`
+              <button onclick="setBnItem(${idx},'${c.filter}','${c.icon}','${c.label.replace(/'/g,"\\'")}');closeBnEdit()"
+                style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);background:${c.filter===item.filter?'var(--accent-light)':'var(--surface2)'};cursor:pointer;font-family:inherit;font-size:13px">
+                <span style="font-size:20px">${c.icon}</span>${esc(c.label)}
+              </button>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function closeBnEdit() {
+  document.getElementById('bnEditOverlay')?.remove();
+}
+
+function setBnItem(idx, filter, icon, label) {
+  const type = (filter === 'menu') ? 'action' : 'filter';
+  bottomNavConfig[idx] = {icon, label, filter, type};
+  saveBottomNav();
+  renderBottomNav();
+}
 
 // ===== SIDEBAR =====
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('open');}
