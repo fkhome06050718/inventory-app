@@ -288,6 +288,7 @@ body {
 .shopping-check { width:22px; height:22px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
 .shopping-name { flex:1; font-size:13.5px; font-weight:500; transition:all 0.2s; }
 .shopping-item.checked .shopping-name { text-decoration:line-through; color:var(--text-muted); }
+.shopping-item.removing { opacity:0; transform:translateX(20px); transition:opacity 0.4s ease, transform 0.4s ease; }
 .shopping-reason { font-size:11px; color:var(--text-muted); margin-top:2px; }
 .item-actions { display: flex; gap: 5px; flex-shrink: 0; margin-left: auto; }
 .icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--text-muted); font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); }
@@ -2805,7 +2806,7 @@ function openShoppingList() {
   } else {
     content.innerHTML = list.map((item, i) => `
       <div class="shopping-item">
-        <input type="checkbox" class="shopping-check" id="sc${i}" onchange="this.closest('.shopping-item').classList.toggle('checked', this.checked)">
+        <input type="checkbox" class="shopping-check" id="sc${i}" onchange="onShoppingCheck(this, '${item.id}')">
         <div style="flex:1">
           <div class="shopping-name">${esc(item.displayName || item.name || '')}</div>
           <div class="shopping-reason">${getCatIcon(item.category)} ${esc(item.category)}　${item.reason}</div>
@@ -3009,6 +3010,49 @@ async function bulkDelete() {
 
 // confirmDelete を拡張して一括削除に対応
 const _origConfirmDelete = window.confirmDelete;
+
+function onShoppingCheck(checkbox, itemId) {
+  const row = checkbox.closest('.shopping-item');
+  row.classList.add('checked');
+  // チェック後に選択肢を表示
+  setTimeout(() => {
+    const btn = document.createElement('button');
+    btn.textContent = '🗑️ リストから削除';
+    btn.style.cssText = 'margin-left:8px;font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--danger-light);color:var(--danger);cursor:pointer;font-family:inherit;flex-shrink:0';
+    btn.onclick = () => {
+      row.classList.add('removing');
+      setTimeout(() => {
+        row.remove();
+        const idx = items.findIndex(i=>String(i.id)===String(itemId));
+        if(idx >= 0) {
+          items[idx].inShoppingList = false;
+          safeSetItems(items);
+          pushItem(items[idx]);
+        }
+        const list = document.getElementById('shoppingListContent');
+        if(list && !list.querySelector('.shopping-item')) {
+          list.innerHTML = `<div style="text-align:center;padding:28px 0;color:var(--text-muted)">
+            <div style="font-size:36px;margin-bottom:8px">🎉</div>
+            <div style="font-weight:600">買い物リストは空です</div>
+          </div>`;
+        }
+      }, 400);
+    };
+    // チェックを戻すボタン
+    const undoBtn = document.createElement('button');
+    undoBtn.textContent = '↩️';
+    undoBtn.title = '取り消し';
+    undoBtn.style.cssText = 'font-size:13px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;font-family:inherit;flex-shrink:0';
+    undoBtn.onclick = () => {
+      row.classList.remove('checked');
+      checkbox.checked = false;
+      btn.remove();
+      undoBtn.remove();
+    };
+    row.appendChild(undoBtn);
+    row.appendChild(btn);
+  }, 300);
+}
 
 // ===== 買い物リスト（手動フラグ） =====
 function toggleShoppingList(id) {
