@@ -1233,18 +1233,23 @@ function skipSetup() {
 function openSettings() {
   const choice = confirm('接続設定をリセットしますか？\n\nOK → 設定を初期化してセットアップ画面へ\nキャンセル → そのまま');
   if(!choice) return;
+  const clearCache = confirm('写真などのキャッシュもクリアしますか？\n（写真が表示されない場合はOKを選択）\n\nOK → 全データをクリアして再同期\nキャンセル → 接続設定のみリセット');
+  if(clearCache) {
+    localStorage.clear();
+    location.reload();
+    return;
+  }
   SCRIPT_URL = ''; APP_PW = '';
   localStorage.removeItem('inventory_script_url');
   localStorage.removeItem('inventory_password');
   offlineMode = false; localStorage.removeItem('inventory_offline');
-  // セットアップ画面を再表示
   document.getElementById('scriptUrlInput').value = '';
   document.getElementById('scriptPasswordInput').value = '';
   document.getElementById('setupError').style.display = 'none';
   document.getElementById('connectBtn').textContent = '接続する';
   document.getElementById('connectBtn').disabled = false;
   document.getElementById('setupScreen').classList.add('show');
-  setSyncStatus('offline','オフライン');
+  closeSidebar();
 }
 
 let appStarted = false;
