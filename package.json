@@ -1,0 +1,13 @@
+{
+  "name": "ouchi-inventory",
+  "version": "1.0.0",
+  "description": "おうち在庫管理アプリ",
+  "private": true,
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "web-push": "^3.6.7"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
