@@ -1,5 +1,5 @@
 // api/auth.js - Google OAuth開始エンドポイント
-export default function handler(req, res) {
+module.exports = function handler(req, res) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const redirectUri = `${process.env.APP_URL}/api/callback`;
 
