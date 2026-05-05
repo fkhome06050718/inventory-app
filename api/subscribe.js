@@ -1,29 +1,38 @@
-// api/auth.js - Google OAuth開始エンドポイント
-export default function handler(req, res) {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const redirectUri = `${process.env.APP_URL}/api/callback`;
+// api/subscribe.js - プッシュ通知サブスクリプション登録
+// KVストアの代わりにVercel KV or upstash を使うのが理想だが
+// シンプルにするためファイルベースのGASに保存する
 
-  const scopes = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/script.projects',
-    'https://www.googleapis.com/auth/script.deployments',
-    'https://www.googleapis.com/auth/drive.file',
-    'https://www.googleapis.com/auth/userinfo.email',
-  ].join(' ');
+module.exports = async function handler(req, res) {
+  if(req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    return res.status(200).end();
+  }
+  if(req.method !== 'POST') return res.status(405).end();
 
-  // stateパラメータでCSRF対策
-  const state = Math.random().toString(36).substring(2);
+  res.setHeader('Access-Control-Allow-Origin', '*');
 
-  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  authUrl.searchParams.set('client_id', clientId);
-  authUrl.searchParams.set('redirect_uri', redirectUri);
-  authUrl.searchParams.set('response_type', 'code');
-  authUrl.searchParams.set('scope', scopes);
-  authUrl.searchParams.set('access_type', 'offline');
-  authUrl.searchParams.set('prompt', 'consent');
-  authUrl.searchParams.set('state', state);
+  const { subscription, scriptUrl, password } = req.body;
+  if(!subscription || !scriptUrl || !password) {
+    return res.status(400).json({error: 'missing fields'});
+  }
 
-  // stateをクッキーに保存
-  res.setHeader('Set-Cookie', `oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Max-Age=600; Path=/`);
-  res.redirect(302, authUrl.toString());
+  // GASにサブスクリプションを保存
+  try {
+    const gasRes = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain'},
+      body: JSON.stringify({
+        action: 'savePushSubscription',
+        password,
+        subscription: JSON.stringify(subscription),
+      })
+    });
+    const data = await gasRes.json();
+    if(data.error) throw new Error(data.error);
+    return res.status(200).json({success: true});
+  } catch(e) {
+    return res.status(500).json({error: e.message});
+  }
 }
