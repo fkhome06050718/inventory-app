@@ -564,16 +564,24 @@ select.form-input { cursor: pointer; }
           <div class="sync-dot"></div><span id="syncText">オフライン</span>
         </div>
         <button class="btn btn-primary" onclick="openModal()">＋ 追加</button>
-        <button class="btn btn-ghost" onclick="openReceiptModal()" title="レシートから登録" style="padding:9px 12px">🧾</button>
+        <button class="btn btn-ghost" onclick="startVoiceAdd()" title="音声で追加" style="padding:9px 12px">🎤</button>
       </div>
     </div>
 
     <div class="content">
       <div class="stats-row">
-        <div class="stat-card orange"><div class="stat-label">総アイテム</div><div class="stat-value" id="statTotal">0</div></div>
+        <div class="stat-card orange" onclick="openDashboard()" style="cursor:pointer"><div class="stat-label">総アイテム 📊</div><div class="stat-value" id="statTotal">0</div></div>
         <div class="stat-card green"><div class="stat-label">カテゴリー</div><div class="stat-value" id="statCategories">0</div></div>
         <div class="stat-card yellow"><div class="stat-label">期限が近い</div><div class="stat-value" id="statExpiring">0</div></div>
         <div class="stat-card red"><div class="stat-label">期限切れ</div><div class="stat-value" id="statExpired">0</div></div>
+      </div>
+      <!-- 直近の期限切れアイテム -->
+      <div id="upcomingExpirySection" style="display:none;background:linear-gradient(135deg,#FFF3E0,#FFE0B2);padding:12px 14px;border-radius:var(--radius);margin-bottom:14px;border:1.5px solid #FFB74D40">
+        <div style="font-size:12px;font-weight:600;color:#E65100;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+          <span>⏰ もうすぐ期限切れ</span>
+          <button onclick="document.getElementById('upcomingExpirySection').style.display='none'" style="background:none;border:none;cursor:pointer;color:#E65100;font-size:14px">✕</button>
+        </div>
+        <div id="upcomingExpiryList" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
       <div class="filter-row">
         <span class="filter-chip active" onclick="sortItems('name',this)">名前順</span>
@@ -684,6 +692,10 @@ select.form-input { cursor: pointer; }
       <div class="form-group" id="openDateGroup" style="display:none">
         <label class="form-label">📅 開封日</label>
         <input type="date" class="form-input" id="itemOpenDate" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">💰 価格（円） <span style="font-size:10px;color:var(--text-muted);font-weight:400">（任意）</span></label>
+        <input type="number" class="form-input" id="itemPrice" placeholder="例：298" min="0" inputmode="numeric" />
       </div>
       <div class="form-group">
         <label class="form-label">メモ</label>
@@ -1447,6 +1459,8 @@ async function syncNow() {
             // ローカル専用フィールドを保持
             inShoppingList: local ? (local.inShoppingList || false) : false,
             favorite:       local ? (local.favorite || false) : false,
+            price:          serverItem.price !== undefined && serverItem.price !== '' ? Number(serverItem.price) : (local ? local.price : null),
+            purchaseHistory: local ? (local.purchaseHistory || []) : [],
             updatedAt: serverItem.updatedAt || (local ? local.updatedAt || '' : ''),
             lowFlag: serverItem.lowFlag !== undefined ? !!serverItem.lowFlag : (local ? !!local.lowFlag : false),
             // photo列の値を解析してphotoUrl/photoに振り分け・URL正規化
@@ -1613,6 +1627,8 @@ function render() {
   document.getElementById('statCategories').textContent = new Set(items.map(i=>i.category)).size;
   document.getElementById('statExpiring').textContent = items.filter(i=>{if(!i.expiry)return false;const d=getExpiryInfo(i.expiry).days;return d>=0&&d<=EXPIRY_WARN;}).length;
   document.getElementById('statExpired').textContent = items.filter(i=>i.expiry&&getExpiryInfo(i.expiry).days<0).length;
+  if(currentFilter === 'all') renderUpcomingExpiry();
+  else { const s = document.getElementById('upcomingExpirySection'); if(s) s.style.display = 'none'; }
   document.getElementById('badge-all').textContent = items.length;
   categories.forEach(c=>{
     const el=document.getElementById('badge-'+c.name);
@@ -1669,6 +1685,7 @@ function renderItemCard(item, photoUrl) {
         <div class="item-actions">
           <button class="icon-btn${item.favorite ? ' fav-active' : ''}" title="お気に入り" onclick="toggleFavorite('${item.id}')" style="color:${item.favorite ? '#FFB300' : 'var(--text-muted)'}">★</button>
           <button class="icon-btn${item.inShoppingList ? ' shopping-active' : ''}" title="買い物リストに追加" onclick="toggleShoppingList('${item.id}')" style="color:${item.inShoppingList ? '#2196F3' : 'var(--text-muted)'}">🛒</button>
+          <button class="icon-btn" title="レシピ検索" onclick="searchRecipe('${item.id}')" style="color:var(--text-muted)">🍴</button>
           <button class="icon-btn" title="開封数を変更" onclick="changeOpened('${item.id}')" style="color:${opened>0?'#E65100':'var(--text-muted)'}">📂</button>
           <button class="icon-btn" onclick="editItem('${item.id}')" style="color:var(--text-muted)">✏️</button>
           <button class="icon-btn" onclick="delItem('${item.id}')">🗑️</button>
@@ -1805,6 +1822,7 @@ function editItem(id) {
   document.getElementById('itemOpened').value = item.opened||0;
   document.getElementById('itemOpenDate').value = item.openDate||'';
   document.getElementById('itemNote').value = item.note||'';
+  document.getElementById('itemPrice').value = item.price ?? '';
   setLowFlagBtn(!!item.lowFlag);
   updateMinStockHint();
   renderSubcategorySelect(item.subcategory||'');
@@ -1843,7 +1861,7 @@ async function saveItem() {
   const existingPhoto    = existingItem ? (existingItem.photo    || '') : '';
 
   // ===== データ収集 =====
-  let openedVal = 0, subcat = '', minStock = null, expiry = '', qty = 1, note = '', productType = '', lowFlag = false;
+  let openedVal = 0, subcat = '', minStock = null, expiry = '', qty = 1, note = '', productType = '', lowFlag = false, price = null;
   try { openedVal    = parseInt(document.getElementById('itemOpened').value)      || 0;  } catch(e) {}
   try { subcat       = document.getElementById('itemSubcategory').value            || ''; } catch(e) {}
   try {
@@ -1855,8 +1873,28 @@ async function saveItem() {
   try { note         = document.getElementById('itemNote').value.trim()            || ''; } catch(e) {}
   try { productType  = productTypeVal; } catch(e) {}
   try { lowFlag      = document.getElementById('lowFlagBtn')?.dataset.active === '1'; } catch(e) {}
+  try {
+    const p = document.getElementById('itemPrice')?.value;
+    price = (p !== '' && p !== null && p !== undefined) ? parseInt(p) : null;
+  } catch(e) {}
   let openDate = '';
   try { openDate  = openedVal > 0 ? (document.getElementById('itemOpenDate').value || '') : ''; } catch(e) {}
+
+  // 購入履歴（数量が増えた場合）
+  let purchaseHistory = existingItem ? (existingItem.purchaseHistory || []) : [];
+  if(existingItem && qty > Number(existingItem.qty)) {
+    purchaseHistory.push({
+      date: new Date().toISOString().split('T')[0],
+      qty: qty - Number(existingItem.qty),
+      price: price,
+    });
+  } else if(!existingItem && qty > 0) {
+    purchaseHistory.push({
+      date: new Date().toISOString().split('T')[0],
+      qty: qty,
+      price: price,
+    });
+  }
 
   const data = {
     name, category,
@@ -1867,12 +1905,14 @@ async function saveItem() {
     lowFlag,
     opened: openedVal, openDate,
     note,
+    price,
+    purchaseHistory,
     photo:    isNewPhoto ? '' : existingPhoto,
     photoUrl: isNewPhoto ? '' : existingPhotoUrl,
     date:     new Date().toISOString().split('T')[0],
     updatedAt: new Date().toLocaleDateString('ja-JP'),
-    // 既存の買い物リストフラグを保持
     inShoppingList: existingItem ? (existingItem.inShoppingList || false) : false,
+    favorite:       existingItem ? (existingItem.favorite || false) : false,
   };
 
   // ===== 保存処理 =====
@@ -1893,6 +1933,11 @@ async function saveItem() {
       saved = Object.assign({id: Date.now().toString()}, data);
       items.unshift(saved);
       showToast('✅ 追加しました');
+    }
+    // バーコード履歴に保存（手動入力後でも記録）
+    if(window._lastBarcode) {
+      saveBarcodeHistory(window._lastBarcode);
+      window._lastBarcode = null;
     }
   } catch(e) {
     showToast('⚠️ 保存処理でエラーが発生しました');
@@ -2046,6 +2091,7 @@ function openModal() {
   document.getElementById('modalTitle').textContent = '商品を追加';
   document.getElementById('itemProductType').value = '';
   ['itemName','itemNote'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('itemPrice').value = '';
   document.getElementById('itemCategory').value='';
   document.getElementById('subcategoryGroup').style.display='none';
   document.getElementById('itemSubcategory').innerHTML='<option value="">なし</option>';
@@ -2221,18 +2267,49 @@ async function lookupBarcode(code) {
   status.textContent = `🔍 商品を検索中 (${code})...`;
   showToast(`📦 バーコード読み取り: ${code}`);
 
+  // ⓪ ローカル履歴を確認（過去にスキャンしたバーコード）
+  const history = JSON.parse(localStorage.getItem('barcode_history') || '{}');
+  if(history[code]) {
+    status.textContent = `✅ 履歴から復元: ${history[code].name}`;
+    document.getElementById('itemName').value = history[code].name || '';
+    if(history[code].productType) document.getElementById('itemProductType').value = history[code].productType;
+    if(history[code].category) document.getElementById('itemCategory').value = history[code].category;
+    showToast('💾 過去のスキャン履歴から自動入力しました');
+    return;
+  }
+
   // ① OpenFoodFacts 日本語版
   const result = await tryOpenFoodFacts(code);
-  if(result) { applyProductInfo(result, code); return; }
+  if(result) { applyProductInfo(result, code); saveBarcodeHistory(code); return; }
 
   // ② OpenFoodFacts グローバル版（フォールバック）
   const result2 = await tryOpenFoodFactsWorld(code);
-  if(result2) { applyProductInfo(result2, code); return; }
+  if(result2) { applyProductInfo(result2, code); saveBarcodeHistory(code); return; }
 
-  // ③ バーコードだけ入力欄にセット（手動入力を促す）
+  // ③ バーコードだけ入力欄にセット
   status.textContent = `ℹ️ バーコード ${code} — 商品名を手動で入力してください`;
   document.getElementById('itemName').focus();
-  showToast('ℹ️ 商品名を入力してください');
+  showToast('ℹ️ 商品名を入力後、保存すると次回自動入力されます');
+  // 保存時に履歴も記録するためバーコードを保持
+  window._lastBarcode = code;
+}
+
+// バーコード履歴を保存（最大100件）
+function saveBarcodeHistory(code) {
+  const history = JSON.parse(localStorage.getItem('barcode_history') || '{}');
+  history[code] = {
+    name: document.getElementById('itemName')?.value || '',
+    productType: document.getElementById('itemProductType')?.value || '',
+    category: document.getElementById('itemCategory')?.value || '',
+    savedAt: new Date().toISOString(),
+  };
+  // 古いものを削除（100件超）
+  const keys = Object.keys(history);
+  if(keys.length > 100) {
+    keys.sort((a,b) => (history[a].savedAt || '').localeCompare(history[b].savedAt || ''));
+    delete history[keys[0]];
+  }
+  localStorage.setItem('barcode_history', JSON.stringify(history));
 }
 
 async function tryOpenFoodFacts(code) {
@@ -2820,6 +2897,171 @@ function onShoppingCheck(checkbox, itemId) {
     row.appendChild(undoBtn);
     row.appendChild(btn);
   }, 300);
+}
+
+function searchRecipe(id) {
+  const item = items.find(i=>String(i.id)===String(id));
+  if(!item) return;
+  const keyword = item.productType || item.name || '';
+  if(!keyword) { showToast('⚠️ 検索キーワードがありません'); return; }
+  const url = 'https://cookpad.com/search/' + encodeURIComponent(keyword);
+  window.open(url, '_blank');
+}
+
+// ===== 音声入力 =====
+function startVoiceAdd() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR) { showToast('⚠️ お使いのブラウザは音声認識に対応していません'); return; }
+
+  const rec = new SR();
+  rec.lang = 'ja-JP';
+  rec.continuous = false;
+  rec.interimResults = false;
+
+  showToast('🎤 「商品名 数量 カテゴリ」と話してください...');
+
+  rec.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    parseVoiceInput(text);
+  };
+  rec.onerror = (e) => showToast('⚠️ 音声認識エラー: ' + e.error);
+  rec.start();
+}
+
+function parseVoiceInput(text) {
+  // 「シャンプー 2本 日用品」「牛乳1本 冷蔵庫」などをパース
+  const cleaned = text.replace(/[、。]/g, ' ').replace(/\s+/g, ' ').trim();
+  const parts = cleaned.split(' ');
+  const qtyMatch = cleaned.match(/(\d+)/);
+  const qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+  // カテゴリを既存から推定
+  let foundCategory = '';
+  for(const cat of categories) {
+    if(cleaned.includes(cat.name)) { foundCategory = cat.name; break; }
+  }
+  // 商品名は数量とカテゴリを除いた部分
+  let name = cleaned;
+  if(qtyMatch) name = name.replace(qtyMatch[0], '');
+  if(foundCategory) name = name.replace(foundCategory, '');
+  name = name.replace(/[本個袋箱]/g, '').trim();
+
+  openModal();
+  setTimeout(() => {
+    document.getElementById('itemName').value = name;
+    document.getElementById('itemQty').value = qty;
+    if(foundCategory) document.getElementById('itemCategory').value = foundCategory;
+    showToast('✅ 認識: ' + name + ' / 数量' + qty);
+  }, 300);
+}
+
+// ===== もうすぐ期限切れ =====
+function renderUpcomingExpiry() {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const upcoming = items.filter(i => {
+    if(!i.expiry) return false;
+    const days = Math.floor((new Date(i.expiry) - today) / 86400000);
+    return days >= 0 && days <= 7;
+  }).sort((a,b) => a.expiry.localeCompare(b.expiry)).slice(0, 5);
+
+  const section = document.getElementById('upcomingExpirySection');
+  const list = document.getElementById('upcomingExpiryList');
+  if(!section || !list) return;
+  if(!upcoming.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  list.innerHTML = upcoming.map(item => {
+    const days = Math.floor((new Date(item.expiry) - today) / 86400000);
+    const label = days === 0 ? '今日' : `あと${days}日`;
+    return `<div onclick="editItem('${item.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:rgba(255,255,255,0.6);border-radius:6px;cursor:pointer;font-size:12px">
+      <span>${getCatIcon(item.category)} ${esc(item.productType || item.name || '')}</span>
+      <span style="color:#E65100;font-weight:600">${label}</span>
+    </div>`;
+  }).join('');
+}
+
+// ===== ダッシュボード =====
+function openDashboard() {
+  const today = new Date();
+  const thisMonth = today.toISOString().slice(0,7);
+  const lastMonth = new Date(today.getFullYear(), today.getMonth()-1, 1).toISOString().slice(0,7);
+
+  // 月次集計
+  const monthlySpend = {};
+  const categoryStats = {};
+  const productCount = {};
+  let totalItems = items.length;
+  let totalValue = 0;
+  let lossCount = 0;
+
+  items.forEach(item => {
+    if(item.price) totalValue += Number(item.price) * Number(item.qty);
+    if(item.expiry && new Date(item.expiry) < today) lossCount++;
+    // カテゴリ別
+    const cat = item.category || 'その他';
+    categoryStats[cat] = (categoryStats[cat] || 0) + 1;
+    // 商品別
+    const key = item.productType || item.name;
+    if(key) productCount[key] = (productCount[key] || 0) + 1;
+    // 購入履歴から月次集計
+    (item.purchaseHistory || []).forEach(h => {
+      if(h.price && h.date) {
+        const m = h.date.slice(0,7);
+        monthlySpend[m] = (monthlySpend[m] || 0) + (h.price * h.qty);
+      }
+    });
+  });
+
+  const topProducts = Object.entries(productCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const monthsSorted = Object.entries(monthlySpend).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,6);
+  const lossRate = totalItems > 0 ? Math.round(lossCount / totalItems * 100) : 0;
+
+  const html = `
+    <div class="modal-overlay open" id="dashOverlay" onclick="if(event.target===this)closeDashboard()">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-handle"></div>
+        <div class="modal-header">
+          <div class="modal-title">📊 統計ダッシュボード</div>
+          <button class="close-btn" onclick="closeDashboard()">✕</button>
+        </div>
+        <div class="modal-body" style="padding-bottom:16px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+            <div style="padding:10px;background:var(--surface2);border-radius:8px">
+              <div style="font-size:11px;color:var(--text-muted)">在庫評価額</div>
+              <div style="font-size:18px;font-weight:700;color:var(--accent)">¥${totalValue.toLocaleString()}</div>
+            </div>
+            <div style="padding:10px;background:var(--surface2);border-radius:8px">
+              <div style="font-size:11px;color:var(--text-muted)">食品ロス率</div>
+              <div style="font-size:18px;font-weight:700;color:${lossRate>20?'var(--danger)':'var(--accent)'}">${lossRate}%</div>
+            </div>
+          </div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">📅 月次支出</div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px;margin-bottom:14px">
+            ${monthsSorted.length ? monthsSorted.map(([m,v])=>`
+              <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px">
+                <span>${m}</span><span style="font-weight:600">¥${v.toLocaleString()}</span>
+              </div>`).join('') : '<div style="font-size:12px;color:var(--text-muted);text-align:center">価格データがありません</div>'}
+          </div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">🏆 よく登録する商品 TOP5</div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px;margin-bottom:14px">
+            ${topProducts.length ? topProducts.map(([k,c],i)=>`
+              <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px">
+                <span>${i+1}. ${esc(k)}</span><span style="color:var(--text-muted)">${c}件</span>
+              </div>`).join('') : '<div style="font-size:12px;color:var(--text-muted);text-align:center">データなし</div>'}
+          </div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">📂 カテゴリ別</div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px">
+            ${Object.entries(categoryStats).sort((a,b)=>b[1]-a[1]).map(([c,n])=>`
+              <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px">
+                <span>${getCatIcon(c)} ${esc(c)}</span><span style="color:var(--text-muted)">${n}件</span>
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function closeDashboard() {
+  document.getElementById('dashOverlay')?.remove();
 }
 
 function toggleFavorite(id) {
