@@ -1665,7 +1665,11 @@ function renderItemCard(item, photoUrl) {
        </div>`
     : `<span class="qty-value">${item.qty}</span>`;
   return `<div class="item-card${bulkSelected.has(String(item.id))?' selected':''}" data-id="${item.id}" onclick="if(bulkMode){toggleBulkSelect('${item.id}');return;}">
-    <div class="item-photo">${photoHtml}</div>
+    <div class="item-photo" style="position:relative">
+      ${photoHtml}
+      <button class="icon-btn${item.favorite ? ' fav-active' : ''}" title="お気に入り" onclick="event.stopPropagation();toggleFavorite('${item.id}')"
+        style="position:absolute;top:6px;right:6px;background:rgba(255,255,255,0.85);border-color:transparent;color:${item.favorite ? '#FFB300' : '#aaa'};font-size:16px;width:28px;height:28px;border-radius:50%;padding:0;box-shadow:0 1px 4px rgba(0,0,0,0.15)">★</button>
+    </div>
     <div class="category-tag">${icon} ${esc(item.category)}${item.subcategory ? ` › ${esc(item.subcategory)}` : ''}</div>
     <div class="item-body">
       <div class="item-name">${item.productType ? `<span style="font-size:13.5px;font-weight:600;display:block">${esc(item.productType)}</span>` : ''}<span style="font-size:${item.productType ? '11px' : '13.5px'};font-weight:${item.productType ? '400' : '600'};color:${item.productType ? 'var(--text-muted)' : 'inherit'}">${esc(item.name)}</span></div>
@@ -1676,17 +1680,18 @@ function renderItemCard(item, photoUrl) {
         <div class="item-meta-row">📅 ${item.date||'—'}</div>
       </div>
       ${opened > 0 ? `<div style="margin-bottom:6px">${openedBadge}</div>` : ''}
-      <div class="item-footer">
-        <div class="qty-control">
+      <div style="padding-top:10px;border-top:1px solid var(--border)">
+        <!-- 1段目: 数量 -->
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px">
           <button class="qty-btn" onclick="chQty('${item.id}',-1)">−</button>
           ${opened > 0 ? `<span class="qty-value" style="font-size:12px">未開封 ${unopened}</span>` : `<span class="qty-value">${item.qty}</span>`}
           <button class="qty-btn" onclick="chQty('${item.id}',1)">＋</button>
         </div>
-        <div class="item-actions">
-          <button class="icon-btn${item.favorite ? ' fav-active' : ''}" title="お気に入り" onclick="toggleFavorite('${item.id}')" style="color:${item.favorite ? '#FFB300' : 'var(--text-muted)'}">★</button>
-          <button class="icon-btn${item.inShoppingList ? ' shopping-active' : ''}" title="買い物リストに追加" onclick="toggleShoppingList('${item.id}')" style="color:${item.inShoppingList ? '#2196F3' : 'var(--text-muted)'}">🛒</button>
+        <!-- 2段目: アクションボタン -->
+        <div style="display:flex;gap:5px;justify-content:center">
+          <button class="icon-btn${item.inShoppingList ? ' shopping-active' : ''}" title="買い物リスト" onclick="toggleShoppingList('${item.id}')" style="color:${item.inShoppingList ? '#2196F3' : 'var(--text-muted)'}">🛒</button>
           <button class="icon-btn" title="レシピ検索" onclick="searchRecipe('${item.id}')" style="color:var(--text-muted)">🍴</button>
-          <button class="icon-btn" title="開封数を変更" onclick="changeOpened('${item.id}')" style="color:${opened>0?'#E65100':'var(--text-muted)'}">📂</button>
+          <button class="icon-btn" title="開封数" onclick="changeOpened('${item.id}')" style="color:${opened>0?'#E65100':'var(--text-muted)'}">📂</button>
           <button class="icon-btn" onclick="editItem('${item.id}')" style="color:var(--text-muted)">✏️</button>
           <button class="icon-btn" onclick="delItem('${item.id}')">🗑️</button>
         </div>
