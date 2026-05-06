@@ -976,15 +976,17 @@ let items = JSON.parse(localStorage.getItem('inventory_items') || '[]');
 function normalizePhotoUrl(url) {
   if(!url) return '';
   if(url.startsWith('data:')) return url;
-  // lh3形式 → thumbnail形式に変換
-  if(url.includes('lh3.googleusercontent.com')) {
-    const m = url.match(/\/d\/([^=?&]+)/);
-    if(m) return 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w1200';
-  }
-  // uc?export=view形式 → thumbnail形式に変換
+  // lh3形式はそのまま使用（最も安定）
+  if(url.includes('lh3.googleusercontent.com')) return url;
+  // uc?export=view形式 → lh3形式に変換
   if(url.includes('drive.google.com/uc')) {
     const m = url.match(/[?&]id=([^&]+)/);
-    if(m) return 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w1200';
+    if(m) return 'https://lh3.googleusercontent.com/d/' + m[1];
+  }
+  // thumbnail形式 → lh3形式に変換
+  if(url.includes('drive.google.com/thumbnail')) {
+    const m = url.match(/[?&]id=([^&]+)/);
+    if(m) return 'https://lh3.googleusercontent.com/d/' + m[1];
   }
   return url;
 }
