@@ -540,6 +540,7 @@ select.form-input { cursor: pointer; }
     </div>
     <div class="sidebar-bottom">
       <button class="nav-item" onclick="openShoppingList()"><span class="icon">🛒</span>買い物リスト</button>
+      <button class="nav-item" onclick="openDashboard();closeSidebar()"><span class="icon">📊</span>統計ダッシュボード</button>
       <button class="nav-item" onclick="openTemplateModal()"><span class="icon">⭐</span>テンプレート</button>
       <button class="nav-item" onclick="toggleBulkMode()"><span class="icon">☑️</span>一括操作</button>
       <button class="nav-item" onclick="syncNow()"><span class="icon">🔄</span>今すぐ同期</button>
@@ -570,7 +571,11 @@ select.form-input { cursor: pointer; }
 
     <div class="content">
       <div class="stats-row">
-        <div class="stat-card orange" onclick="openDashboard()" style="cursor:pointer"><div class="stat-label">総アイテム 📊</div><div class="stat-value" id="statTotal">0</div></div>
+        <div class="stat-card orange" onclick="openDashboard()" style="cursor:pointer;position:relative;border:2px solid #F4845F40">
+          <div class="stat-label">総アイテム</div>
+          <div class="stat-value" id="statTotal">0</div>
+          <div style="font-size:10px;color:#E65100;margin-top:2px;font-weight:600">📊 統計を見る</div>
+        </div>
         <div class="stat-card green"><div class="stat-label">カテゴリー</div><div class="stat-value" id="statCategories">0</div></div>
         <div class="stat-card yellow"><div class="stat-label">期限が近い</div><div class="stat-value" id="statExpiring">0</div></div>
         <div class="stat-card red"><div class="stat-label">期限切れ</div><div class="stat-value" id="statExpired">0</div></div>
