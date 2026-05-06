@@ -541,6 +541,7 @@ select.form-input { cursor: pointer; }
       <button class="nav-item" onclick="openCategoryModal()"><span class="icon">📂</span>カテゴリー管理</button>
       <button class="nav-item" onclick="openSettingsModal()"><span class="icon">⏰</span>期限アラート設定</button>
       <button class="nav-item" onclick="openSettings()"><span class="icon">⚙️</span>接続設定</button>
+      <button class="nav-item" id="pushNotifyBtn" onclick="requestPushPermission()" style="display:none"><span class="icon">🔔</span>通知を有効にする</button>
     </div>
   </nav>
 
@@ -1198,9 +1199,9 @@ async function startApp() {
     });
     window.addEventListener('pageshow', e => { if(e.persisted) syncNow(); });
     migratePhotos(items);
-    // プッシュ通知（未登録の場合のみ）
+    // プッシュ通知未登録の場合はボタンを表示
     if(!localStorage.getItem('push_subscribed')) {
-      setTimeout(initPushNotification, 3000);
+      checkPushAvailable();
     }
   } else {
     setSyncStatus('offline','オフライン');
@@ -1208,16 +1209,34 @@ async function startApp() {
 }
 
 // ===== プッシュ通知 =====
-async function initPushNotification() {
+async function checkPushAvailable() {
   if(!('serviceWorker' in navigator) || !('PushManager' in window)) return;
   try {
     const res = await fetch('/api/vapid-public').catch(() => null);
-    if(!res || !res.ok) return; // Vercel環境以外はスキップ
+    if(!res || !res.ok) return;
     const {publicKey} = await res.json();
     if(!publicKey) return;
+    // ボタンを表示（iOSはユーザージェスチャーが必要）
+    const btn = document.getElementById('pushNotifyBtn');
+    if(btn) btn.style.display = '';
+  } catch(e) {}
+}
+
+async function requestPushPermission() {
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    showToast('⚠️ このブラウザはプッシュ通知に対応していません');
+    return;
+  }
+  try {
+    const res = await fetch('/api/vapid-public');
+    const {publicKey} = await res.json();
+    if(!publicKey) { showToast('⚠️ VAPID設定エラー'); return; }
 
     const permission = await Notification.requestPermission();
-    if(permission !== 'granted') return;
+    if(permission !== 'granted') {
+      showToast('🔕 通知が許可されませんでした');
+      return;
+    }
 
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.subscribe({
@@ -1232,9 +1251,12 @@ async function initPushNotification() {
     });
 
     localStorage.setItem('push_subscribed', '1');
-    showToast('🔔 プッシュ通知を有効にしました');
+    const btn = document.getElementById('pushNotifyBtn');
+    if(btn) btn.style.display = 'none';
+    showToast('🔔 プッシュ通知を有効にしました！毎朝9時に通知が届きます');
+    closeSidebar();
   } catch(e) {
-    console.warn('Push setup failed:', e);
+    showToast('⚠️ 通知設定エラー: ' + e.message);
   }
 }
 
