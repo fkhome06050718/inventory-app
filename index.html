@@ -294,6 +294,7 @@ body {
 .icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface2); color: var(--text-muted); font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition); }
 .icon-btn:active { background: var(--danger-light); color: var(--danger); }
 .icon-btn.shopping-active { background: #E3F2FD; border-color: #2196F3; }
+.icon-btn.fav-active { background: #FFF8E1; border-color: #FFB300; }
 
 .category-tag { position: absolute; top: 8px; left: 8px; font-size: 10px; font-weight: 600; padding: 3px 7px; border-radius: 5px; background: rgba(255,255,255,0.92); color: var(--text); border: 1px solid var(--border); backdrop-filter: blur(4px); }
 
@@ -522,9 +523,13 @@ select.form-input { cursor: pointer; }
     <div class="nav-section">
       <div class="nav-label" style="display:flex;align-items:center;justify-content:space-between;padding-right:12px">
         カテゴリー
-        <button onclick="openCategoryModal()" style="background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-muted);padding:2px 4px;border-radius:4px" title="カテゴリーを編集">＋</button>
+        <div style="display:flex;gap:4px">
+          <button onclick="openSidebarVisibilityModal()" style="background:none;border:none;cursor:pointer;font-size:13px;color:var(--text-muted);padding:2px 4px;border-radius:4px" title="表示/非表示">👁</button>
+          <button onclick="openCategoryModal()" style="background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-muted);padding:2px 4px;border-radius:4px" title="カテゴリーを編集">＋</button>
+        </div>
       </div>
       <button class="nav-item active" onclick="filterCategory('all',this)"><span class="icon">📦</span>すべて<span class="badge" id="badge-all">0</span></button>
+      <button class="nav-item" onclick="filterCategory('favorite',this)" id="sidebarFavoriteBtn"><span class="icon">★</span>お気に入り</button>
       <div id="sidebarCategoryNav"></div>
     </div>
     <div class="nav-section" style="margin-top:12px">
@@ -1043,6 +1048,8 @@ function renderCategoryUI() {
       categories.map(c=>`<option value="${esc(c.name)}">${c.icon} ${esc(c.name)}</option>`).join('');
     if(cur) sel.value = cur;
   }
+  // 表示/非表示を適用
+  setTimeout(applySidebarVisibility, 0);
 }
 
 const ICONS = new Proxy({}, { get:(_, name) => getCatIcon(name) });
@@ -1439,6 +1446,7 @@ async function syncNow() {
             productType: serverItem.productType || (local ? local.productType || '' : ''),
             // ローカル専用フィールドを保持
             inShoppingList: local ? (local.inShoppingList || false) : false,
+            favorite:       local ? (local.favorite || false) : false,
             updatedAt: serverItem.updatedAt || (local ? local.updatedAt || '' : ''),
             lowFlag: serverItem.lowFlag !== undefined ? !!serverItem.lowFlag : (local ? !!local.lowFlag : false),
             // photo列の値を解析してphotoUrl/photoに振り分け・URL正規化
@@ -1573,19 +1581,20 @@ function getFiltered() {
   if(currentFilter==='expiring') list=list.filter(i=>{if(!i.expiry)return false;const d=getExpiryInfo(i.expiry).days;return d>=0&&d<=EXPIRY_WARN;});
   else if(currentFilter==='expired') list=list.filter(i=>i.expiry&&getExpiryInfo(i.expiry).days<0);
   else if(currentFilter==='low') list=list.filter(i=>isLowStock(i));
+  else if(currentFilter==='favorite') list=list.filter(i=>!!i.favorite);
   else if(currentFilter!=='all') list=list.filter(i=>i.category===currentFilter);
   list.sort((a,b)=>{
+    // お気に入りは常に最上部
+    if(!!a.favorite !== !!b.favorite) return a.favorite ? -1 : 1;
     if(currentSort==='name') return (a.name||'').localeCompare(b.name||'','ja');
     if(currentSort==='expiry'){if(!a.expiry&&!b.expiry)return 0;if(!a.expiry)return 1;if(!b.expiry)return -1;return a.expiry.localeCompare(b.expiry);}
     if(currentSort==='category') {
       const catOrder = categories.map(c=>c.name);
       const ai = catOrder.indexOf(a.category), bi = catOrder.indexOf(b.category);
       if(ai !== bi) return (ai===-1?999:ai) - (bi===-1?999:bi);
-      // 同カテゴリー内はサブカテゴリー順 → その中で名前順
       const cat = categories.find(c => c.name === a.category);
       const subOrder = cat ? (cat.subs || []) : [];
       const asi = subOrder.indexOf(a.subcategory||''), bsi = subOrder.indexOf(b.subcategory||'');
-      // サブカテゴリーなしは末尾
       const aSubRank = asi === -1 ? 999 : asi;
       const bSubRank = bsi === -1 ? 999 : bsi;
       if(aSubRank !== bSubRank) return aSubRank - bSubRank;
@@ -1658,6 +1667,7 @@ function renderItemCard(item, photoUrl) {
           <button class="qty-btn" onclick="chQty('${item.id}',1)">＋</button>
         </div>
         <div class="item-actions">
+          <button class="icon-btn${item.favorite ? ' fav-active' : ''}" title="お気に入り" onclick="toggleFavorite('${item.id}')" style="color:${item.favorite ? '#FFB300' : 'var(--text-muted)'}">★</button>
           <button class="icon-btn${item.inShoppingList ? ' shopping-active' : ''}" title="買い物リストに追加" onclick="toggleShoppingList('${item.id}')" style="color:${item.inShoppingList ? '#2196F3' : 'var(--text-muted)'}">🛒</button>
           <button class="icon-btn" title="開封数を変更" onclick="changeOpened('${item.id}')" style="color:${opened>0?'#E65100':'var(--text-muted)'}">📂</button>
           <button class="icon-btn" onclick="editItem('${item.id}')" style="color:var(--text-muted)">✏️</button>
@@ -2002,7 +2012,8 @@ function toggleOpenDateField() {
 // ===== FILTERS =====
 function filterCategory(cat, btn) {
   currentFilter = cat;
-  document.getElementById('topbarTitle').textContent = cat==='all'?'すべての在庫':cat;
+  const label = cat==='all' ? 'すべての在庫' : cat==='favorite' ? '★ お気に入り' : cat;
+  document.getElementById('topbarTitle').textContent = label;
   document.querySelectorAll('.sidebar .nav-item').forEach(el=>el.classList.remove('active'));
   if(btn) btn.classList.add('active');
   render(); closeSidebar();
@@ -2811,6 +2822,16 @@ function onShoppingCheck(checkbox, itemId) {
   }, 300);
 }
 
+function toggleFavorite(id) {
+  const idx = items.findIndex(i=>String(i.id)===String(id));
+  if(idx < 0) return;
+  items[idx].favorite = !items[idx].favorite;
+  safeSetItems(items);
+  render();
+  showToast(items[idx].favorite ? '★ お気に入りに追加しました' : '☆ お気に入りを解除しました');
+  pushItem(items[idx]);
+}
+
 // ===== 買い物リスト（手動フラグ） =====
 function toggleShoppingList(id) {
   const idx = items.findIndex(i=>String(i.id)===String(id));
@@ -2922,6 +2943,104 @@ function setBnItem(idx, filter, icon, label) {
   bottomNavConfig[idx] = {icon, label, filter, type};
   saveBottomNav();
   renderBottomNav();
+}
+
+// ===== サイドバー表示/非表示設定 =====
+let sidebarHidden = JSON.parse(localStorage.getItem('sidebar_hidden') || '[]');
+
+function saveSidebarHidden() {
+  localStorage.setItem('sidebar_hidden', JSON.stringify(sidebarHidden));
+}
+
+function openSidebarVisibilityModal() {
+  // 全項目リスト（固定 + カテゴリ + フィルター）
+  const allItems = [
+    {id:'favorite',  label:'★ お気に入り',   icon:'★'},
+    ...categories.map(c=>({id:'cat_'+c.name, label:c.name, icon:c.icon})),
+    {id:'expiring',  label:'期限が近い',      icon:'⚠️'},
+    {id:'expired',   label:'期限切れ',        icon:'🚨'},
+    {id:'low',       label:'残り少ない',      icon:'📉'},
+    {id:'shopping',  label:'買い物リスト',    icon:'🛒'},
+    {id:'template',  label:'テンプレート',    icon:'⭐'},
+    {id:'bulk',      label:'一括操作',        icon:'☑️'},
+    {id:'sync',      label:'今すぐ同期',      icon:'🔄'},
+    {id:'catmgr',    label:'カテゴリー管理',  icon:'📂'},
+    {id:'alert',     label:'期限アラート設定',icon:'⏰'},
+    {id:'settings',  label:'接続設定',        icon:'⚙️'},
+    {id:'push',      label:'通知を有効にする',icon:'🔔'},
+  ];
+
+  const html = `
+    <div class="modal-overlay open" id="sidebarVisOverlay" onclick="if(event.target===this)closeSidebarVisModal()">
+      <div class="modal" style="max-width:340px">
+        <div class="modal-handle"></div>
+        <div class="modal-header">
+          <div class="modal-title">👁 表示項目の設定</div>
+          <button class="close-btn" onclick="closeSidebarVisModal()">✕</button>
+        </div>
+        <div class="modal-body" style="padding-bottom:16px">
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">非表示にしても機能は使用可能です</p>
+          ${allItems.map(item=>`
+            <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+              <input type="checkbox" ${!sidebarHidden.includes(item.id)?'checked':''} onchange="toggleSidebarItem('${item.id}',this.checked)" style="width:18px;height:18px;accent-color:var(--accent)">
+              <span style="font-size:16px">${item.icon}</span>
+              <span style="font-size:13px">${item.label}</span>
+            </label>`).join('')}
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function closeSidebarVisModal() {
+  document.getElementById('sidebarVisOverlay')?.remove();
+}
+
+function toggleSidebarItem(id, visible) {
+  if(visible) {
+    sidebarHidden = sidebarHidden.filter(h=>h!==id);
+  } else {
+    if(!sidebarHidden.includes(id)) sidebarHidden.push(id);
+  }
+  saveSidebarHidden();
+  applySidebarVisibility();
+}
+
+function applySidebarVisibility() {
+  // お気に入りボタン
+  const favBtn = document.getElementById('sidebarFavoriteBtn');
+  if(favBtn) favBtn.style.display = sidebarHidden.includes('favorite') ? 'none' : '';
+
+  // カテゴリボタン（sidebarCategoryNav内）
+  const nav = document.getElementById('sidebarCategoryNav');
+  if(nav) {
+    nav.querySelectorAll('.nav-item').forEach(btn => {
+      const cat = btn.textContent.trim().replace(/\d+/,'').trim();
+      const catId = 'cat_' + cat;
+      if(sidebarHidden.includes(catId)) btn.style.display = 'none';
+      else btn.style.display = '';
+    });
+  }
+
+  // フィルター・操作ボタン（data-vis-idで管理）
+  const mapping = {
+    'expiring': '.nav-item[onclick*="expiring"]',
+    'expired':  '.nav-item[onclick*="expired"]',
+    'low':      '.nav-item[onclick*="\'low\'"]',
+    'shopping': '.nav-item[onclick*="openShoppingList"]',
+    'template': '.nav-item[onclick*="openTemplateModal"]',
+    'bulk':     '.nav-item[onclick*="toggleBulkMode"]',
+    'sync':     '.nav-item[onclick*="syncNow"]',
+    'catmgr':   '.nav-item[onclick*="openCategoryModal"]',
+    'alert':    '.nav-item[onclick*="openSettingsModal"]',
+    'settings': '.nav-item[onclick*="openSettings()"]',
+    'push':     '#pushNotifyBtn',
+  };
+  Object.entries(mapping).forEach(([id, selector]) => {
+    document.querySelectorAll(selector).forEach(el => {
+      el.style.display = sidebarHidden.includes(id) ? 'none' : '';
+    });
+  });
 }
 
 // ===== SIDEBAR =====
